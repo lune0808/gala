@@ -192,10 +192,36 @@ VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR sur
 typedef struct {
 	VkSwapchainKHR chain;
 	VkImage *slot;
+	VkImageView *view;
 	u32 n_slot;
 	VkFormat fmt;
 	VkExtent2D dim;
 } swapchain;
+
+VkImageView swapchain_view(VkDevice logical, VkImage img, VkFormat fmt)
+{
+	VkImageViewCreateInfo view_desc = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = img,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = fmt,
+		.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.subresourceRange.baseMipLevel = 0,
+		.subresourceRange.levelCount = 1,
+		.subresourceRange.baseArrayLayer = 0,
+		.subresourceRange.layerCount = 1,
+	};
+	VkImageView view;
+	if (vkCreateImageView(logical, &view_desc, NULL, &view) != VK_SUCCESS) {
+		fprintf(stderr, "vkCreateInstance\n");
+		exit(1);
+	}
+	return view;
+}
 
 swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *win, queue_families *fam, VkPhysicalDevice dev)
 {
@@ -236,6 +262,10 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, swap.slot);
 	swap.fmt = fmt.format;
 	swap.dim = dim;
+	swap.view = xmalloc(swap.n_slot * sizeof *swap.view);
+	for (u32 i = 0; i < swap.n_slot; i++) {
+		swap.view[i] = swapchain_view(logical, swap.slot[i], fmt.format);
+	}
 	return swap;
 }
 
@@ -373,6 +403,10 @@ int main()
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
+	for (u32 i = 0; i < swap.n_slot; i++) {
+		vkDestroyImageView(interf.logical, swap.view[i], NULL);
+	}
+	free(swap.view);
 	free(swap.slot);
 	vkDestroySwapchainKHR(interf.logical, swap.chain, NULL);
 	vkDestroyDevice(interf.logical, NULL);
