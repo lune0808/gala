@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
 #include <stdint.h>
@@ -26,6 +27,23 @@ GLFWwindow *init_window_or_crash(int width, int height, const char *title)
 	return win;
 }
 
+static const char *const validation = "VK_LAYER_KHRONOS_validation";
+
+void vulkan_validation_layers_or_crash()
+{
+	uint32_t n_lyr;
+	vkEnumerateInstanceLayerProperties(&n_lyr, NULL);
+	VkLayerProperties *lyr = malloc(n_lyr * sizeof *lyr);
+	vkEnumerateInstanceLayerProperties(&n_lyr, lyr);
+	for (VkLayerProperties *cur = lyr; cur != lyr + n_lyr; cur++) {
+		if (strcmp(validation, cur->layerName) == 0) {
+			return;
+		}
+	}
+	fprintf(stderr, "validation layer '%s' not found\n", validation);
+	exit(1);
+}
+
 VkInstance vulkan_instance_or_crash()
 {
 	VkApplicationInfo app_desc = {
@@ -39,8 +57,12 @@ VkInstance vulkan_instance_or_crash()
 	VkInstanceCreateInfo inst_desc = {
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 		.pApplicationInfo = &app_desc,
-		.enabledLayerCount = 0,
 	};
+#ifndef NDEBUG
+	vulkan_validation_layers_or_crash();
+	inst_desc.enabledLayerCount = 1;
+	inst_desc.ppEnabledLayerNames = &validation;
+#endif
 	inst_desc.ppEnabledExtensionNames = glfwGetRequiredInstanceExtensions(&inst_desc.enabledExtensionCount);
 	VkInstance inst;
 	VkResult status = vkCreateInstance(&inst_desc, NULL, &inst);
@@ -66,6 +88,7 @@ int main()
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
+	vkDestroyInstance(inst, NULL);
 	glfwDestroyWindow(win);
 	glfwTerminate();
 	return 0;
