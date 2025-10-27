@@ -131,26 +131,21 @@ u32 processor_score(VkPhysicalDevice dev, queue_families *f)
 	return score;
 }
 
-typedef struct
-{
-	VkPhysicalDevice dev;
-	queue_families queues;
-} vulkan_processor_properties;
-
-vulkan_processor_properties vulkan_select_gpu_or_crash(VkInstance inst)
+VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, queue_families *queues)
 {
 	VkPhysicalDevice selected = VK_NULL_HANDLE;
-	queue_families queues;
 	u32 n_gpu;
 	vkEnumeratePhysicalDevices(inst, &n_gpu, NULL);
 	VkPhysicalDevice *gpu = xmalloc(n_gpu * sizeof *gpu);
 	vkEnumeratePhysicalDevices(inst, &n_gpu, gpu);
 	u32 best_score = 0;
 	for (u32 i = 0; i < n_gpu; i++) {
-		u32 score = processor_score(gpu[i], &queues);
+		queue_families cur_queues;
+		u32 score = processor_score(gpu[i], &cur_queues);
 		if (score > best_score) {
 			best_score = score;
 			selected = gpu[i];
+			*queues = cur_queues;
 		}
 	}
 	free(gpu);
@@ -158,15 +153,15 @@ vulkan_processor_properties vulkan_select_gpu_or_crash(VkInstance inst)
 		fprintf(stderr, "suitable processor not found.\n");
 		exit(1);
 	}
-	return (vulkan_processor_properties){ selected, queues };
+	return selected;
 }
 
-VkDevice vulkan_logical_device_or_crash(vulkan_processor_properties prop)
+VkDevice vulkan_logical_device_or_crash(VkPhysicalDevice physical, queue_families *queues)
 {
 	float prio = 1.0f;
 	VkDeviceQueueCreateInfo queue_desc = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = prop.queues.graphics,
+		.queueFamilyIndex = queues->graphics,
 		.queueCount = 1,
 		.pQueuePriorities = &prio,
 	};
@@ -181,11 +176,18 @@ VkDevice vulkan_logical_device_or_crash(vulkan_processor_properties prop)
 		.ppEnabledLayerNames = &validation,
 	};
 	VkDevice logical;
-	if (vkCreateDevice(prop.dev, &logdev_desc, NULL, &logical) != VK_SUCCESS) {
+	if (vkCreateDevice(physical, &logdev_desc, NULL, &logical) != VK_SUCCESS) {
 		fprintf(stderr, "couldn't create vulkan logical device");
 		exit(1);
 	}
 	return logical;
+}
+
+VkQueue vulkan_graphics_queue(VkDevice logical, queue_families *queues)
+{
+	VkQueue q;
+	vkGetDeviceQueue(logical, queues->graphics, 0, &q);
+	return q;
 }
 
 static const int WIDTH = 800;
@@ -199,8 +201,10 @@ int main()
 	vkEnumerateInstanceExtensionProperties(NULL, &n_ext, NULL);
 	printf("%" PRIu32 " extensions supported for Vulkan\n", n_ext);
 	VkInstance inst = vulkan_instance_or_crash();
-	vulkan_processor_properties prop = vulkan_select_gpu_or_crash(inst);
-	VkDevice logical = vulkan_logical_device_or_crash(prop);
+	queue_families queues;
+	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, &queues);
+	VkDevice logical = vulkan_logical_device_or_crash(physical, &queues);
+	VkQueue gfx_q = vulkan_graphics_queue(logical, &queues);
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
