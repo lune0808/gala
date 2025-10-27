@@ -1,14 +1,15 @@
 DIR = $(shell find inc -type d)
 BINDIR = $(DIR:inc%=bin%)
-LIBS =
-LIBCPPFLAGS = # $(shell pkg-config --cflags $(LIBS))
-LIBLDFLAGS = # $(shell pkg-config --libs $(LIBS))
+LIBS = glfw3 cglm
+LIBCPPFLAGS = $(shell pkg-config --cflags $(LIBS))
+LIBLDFLAGS = $(shell pkg-config --libs $(LIBS))
 SAN =
 CPPFLAGS = -MMD -MP -Ibin -Iinc $(LIBCPPFLAGS)
 DEBUG = -ggdb3
 OPT ?=
-CFLAGS = $(SAN) $(DEBUG) $(OPT)
-LDFLAGS = $(SAN) $(LIBLDFLAGS)
+WARNING = -Wall -Wextra -Wconversion
+CFLAGS = $(SAN) $(DEBUG) $(OPT) $(WARNING)
+LDFLAGS = $(SAN) $(LIBLDFLAGS) -lvulkan -ldl -pthread -lX11 -lXxf86vm -lXrandr -lXi
 
 CC = gcc
 LD = gcc
