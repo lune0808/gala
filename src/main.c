@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
@@ -87,14 +88,21 @@ VkInstance vulkan_instance_or_crash()
 }
 
 typedef struct {
-	u32 graphics;
+	union {
+		struct {
+			u32 graphics;
+			u32 present;
+		};
+		u32 array_repr[0];
+	};
+
 	u32 missing;
 } queue_families;
 
-queue_families required_queue_families(VkPhysicalDevice dev)
+queue_families required_queue_families(VkPhysicalDevice dev, VkSurfaceKHR surface)
 {
 	queue_families req;
-	req.missing = 1u;
+	req.missing = 1u | 2u;
 	u32 n_qf;
 	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_qf, NULL);
 	VkQueueFamilyProperties *qf = xmalloc(n_qf * sizeof *qf);
@@ -103,17 +111,155 @@ queue_families required_queue_families(VkPhysicalDevice dev)
 		if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
 			req.graphics = i;
 			req.missing &= ~1u;
-			break;
+		}
+		VkBool32 presentable;
+		vkGetPhysicalDeviceSurfaceSupportKHR(dev, i, surface, &presentable);
+		if (presentable) {
+			req.present = i;
+			req.missing &= ~2u;
 		}
 	}
 	free(qf);
 	return req;
 }
 
-u32 processor_score(VkPhysicalDevice dev, queue_families *f)
+static inline u32 min_u32(u32 a, u32 b)
 {
-	*f = required_queue_families(dev);
+	return (a < b)? a: b;
+}
+
+static inline u32 max_u32(u32 a, u32 b)
+{
+	return (a < b)? b: a;
+}
+
+static inline u32 clamp_u32(u32 x, u32 lo, u32 hi)
+{
+	return max_u32(lo, min_u32(x, hi));
+}
+
+VkExtent2D swapchain_select_resolution(VkPhysicalDevice dev, VkSurfaceKHR surface, GLFWwindow *win, VkSurfaceCapabilitiesKHR *pcap)
+{
+	VkSurfaceCapabilitiesKHR cap;
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface, &cap);
+	*pcap = cap;
+	if (cap.currentExtent.width == UINT32_MAX) {
+		int width, height;
+		glfwGetFramebufferSize(win, &width, &height);
+		return (VkExtent2D){
+			clamp_u32((u32) width, cap.minImageExtent.width, cap.maxImageExtent.height),
+			clamp_u32((u32) height, cap.minImageExtent.height, cap.maxImageExtent.height),
+		};
+	} else {
+		return cap.currentExtent;
+	}
+}
+
+VkSurfaceFormatKHR swapchain_select_pixels(VkPhysicalDevice dev, VkSurfaceKHR surface)
+{
+	u32 n_fmt;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, NULL);
+	VkSurfaceFormatKHR *fmt = xmalloc(n_fmt * sizeof *fmt);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, fmt);
+	VkSurfaceFormatKHR selected = fmt[0];
+	for (u32 i = 0; i < n_fmt; i++) {
+		if (fmt[i].format == VK_FORMAT_B8G8R8A8_SRGB && fmt[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+			selected = fmt[i];
+			break;
+		}
+	}
+	free(fmt);
+	return selected;
+}
+
+VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR surface)
+{
+	u32 n_swap;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, NULL);
+	VkPresentModeKHR *swap = xmalloc(n_swap * sizeof *swap);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, swap);
+	VkPresentModeKHR selected = VK_PRESENT_MODE_FIFO_KHR;
+	for (u32 i = 0; i < n_swap; i++) {
+		if (swap[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+			selected = swap[i];
+			break;
+		}
+	}
+	free(swap);
+	return selected;
+}
+
+typedef struct {
+	VkSwapchainKHR chain;
+	VkImage *slot;
+	u32 n_slot;
+	VkFormat fmt;
+	VkExtent2D dim;
+} swapchain;
+
+swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *win, queue_families *fam, VkPhysicalDevice dev)
+{
+	VkSurfaceCapabilitiesKHR cap;
+	VkExtent2D dim = swapchain_select_resolution(dev, surface, win, &cap);
+	VkPresentModeKHR mode = swapchain_select_latency(dev, surface);
+	VkSurfaceFormatKHR fmt = swapchain_select_pixels(dev, surface);
+	u32 expected_swap_cnt = cap.minImageCount + 1u;
+	VkSwapchainCreateInfoKHR swap_desc = {
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = surface,
+		.minImageCount = (cap.maxImageCount != 0)? min_u32(cap.maxImageCount, expected_swap_cnt): expected_swap_cnt,
+		.imageFormat = fmt.format,
+		.imageColorSpace = fmt.colorSpace,
+		.imageExtent = dim,
+		.imageArrayLayers = 1,
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		.preTransform = cap.currentTransform,
+		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		.presentMode = mode,
+		.clipped = VK_TRUE,
+		.oldSwapchain = VK_NULL_HANDLE,
+	};
+	if (fam->graphics == fam->present) {
+		swap_desc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	} else {
+		swap_desc.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+		swap_desc.queueFamilyIndexCount = 2;
+		swap_desc.pQueueFamilyIndices = fam->array_repr;
+	}
+	swapchain swap;
+	if (vkCreateSwapchainKHR(logical, &swap_desc, NULL, &swap.chain) != VK_SUCCESS) {
+		fprintf(stderr, "vkCreateSwapchainKHR\n");
+		exit(1);
+	}
+	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, NULL);
+	swap.slot = xmalloc(swap.n_slot * sizeof *swap.slot);
+	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, swap.slot);
+	swap.fmt = fmt.format;
+	swap.dim = dim;
+	return swap;
+}
+
+static const char *const swapchain_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+
+u32 processor_score(VkPhysicalDevice dev, VkSurfaceKHR surface, queue_families *f)
+{
+	*f = required_queue_families(dev, surface);
 	if (f->missing) {
+		return 0;
+	}
+	u32 n_ext;
+	vkEnumerateDeviceExtensionProperties(dev, NULL, &n_ext, NULL);
+	VkExtensionProperties *ext = xmalloc(n_ext * sizeof *ext);
+	vkEnumerateDeviceExtensionProperties(dev, NULL, &n_ext, ext);
+	bool found = false;
+	for (u32 i = 0; i < n_ext; i++) {
+		if (strcmp(ext[i].extensionName, swapchain_extension) == 0) {
+			found = true;
+			break;
+		}
+	}
+	free(ext);
+	if (!found) {
 		return 0;
 	}
 	VkPhysicalDeviceProperties prop;
@@ -126,12 +272,12 @@ u32 processor_score(VkPhysicalDevice dev, queue_families *f)
 	} else if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
 		score += 0x10;
 	}
-	printf("%*s assigned score of %" PRIu32 ".\n",
+	printf("%*s assigned score of 0x%" PRIx32 ".\n",
 		(int) VK_MAX_PHYSICAL_DEVICE_NAME_SIZE, prop.deviceName, score);
 	return score;
 }
 
-VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, queue_families *queues)
+VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, VkSurfaceKHR surface, queue_families *queues)
 {
 	VkPhysicalDevice selected = VK_NULL_HANDLE;
 	u32 n_gpu;
@@ -141,7 +287,7 @@ VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, queue_families *que
 	u32 best_score = 0;
 	for (u32 i = 0; i < n_gpu; i++) {
 		queue_families cur_queues;
-		u32 score = processor_score(gpu[i], &cur_queues);
+		u32 score = processor_score(gpu[i], surface, &cur_queues);
 		if (score > best_score) {
 			best_score = score;
 			selected = gpu[i];
@@ -156,38 +302,59 @@ VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, queue_families *que
 	return selected;
 }
 
-VkDevice vulkan_logical_device_or_crash(VkPhysicalDevice physical, queue_families *queues)
+typedef struct {
+	VkDevice logical;
+	VkQueue graphics;
+	VkQueue present;
+} logical_interface;
+
+logical_interface vulkan_logical_device_or_crash(VkPhysicalDevice physical, queue_families *queues)
 {
 	float prio = 1.0f;
-	VkDeviceQueueCreateInfo queue_desc = {
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = queues->graphics,
-		.queueCount = 1,
-		.pQueuePriorities = &prio,
+	VkDeviceQueueCreateInfo queue_desc[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = queues->graphics,
+			.queueCount = 1,
+			.pQueuePriorities = &prio,
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = queues->present,
+			.queueCount = 1,
+			.pQueuePriorities = &prio,
+		},
 	};
 	VkPhysicalDeviceFeatures feat = {};
+	bool sep_queues = (queues->present == queues->graphics);
 	VkDeviceCreateInfo logdev_desc = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pQueueCreateInfos = &queue_desc,
-		.queueCreateInfoCount = 1,
+		.pQueueCreateInfos = queue_desc,
+		.queueCreateInfoCount = sep_queues? 1: 2,
 		.pEnabledFeatures = &feat,
-		.enabledExtensionCount = 0,
+		.enabledExtensionCount = 1,
+		.ppEnabledExtensionNames = &swapchain_extension,
 		.enabledLayerCount = 1,
 		.ppEnabledLayerNames = &validation,
 	};
-	VkDevice logical;
-	if (vkCreateDevice(physical, &logdev_desc, NULL, &logical) != VK_SUCCESS) {
+	logical_interface i;
+	if (vkCreateDevice(physical, &logdev_desc, NULL, &i.logical) != VK_SUCCESS) {
 		fprintf(stderr, "couldn't create vulkan logical device");
 		exit(1);
 	}
-	return logical;
+	vkGetDeviceQueue(i.logical, queues->graphics, 0, &i.graphics);
+	vkGetDeviceQueue(i.logical, queues->present, !sep_queues, &i.present);
+	return i;
 }
 
-VkQueue vulkan_graphics_queue(VkDevice logical, queue_families *queues)
+VkSurfaceKHR window_surface(VkInstance inst, GLFWwindow *win)
 {
-	VkQueue q;
-	vkGetDeviceQueue(logical, queues->graphics, 0, &q);
-	return q;
+	VkSurfaceKHR surface;
+	if (glfwCreateWindowSurface(inst, win, NULL, &surface) != VK_SUCCESS) {
+		fprintf(stderr, "couldn't create a surface to present to\n");
+		exit(1);
+	}
+	return surface;
 }
 
 static const int WIDTH = 800;
@@ -197,18 +364,19 @@ int main()
 {
 	init_glfw_or_crash();
 	GLFWwindow *win = init_window_or_crash(WIDTH, HEIGHT, "Gala");
-	u32 n_ext;
-	vkEnumerateInstanceExtensionProperties(NULL, &n_ext, NULL);
-	printf("%" PRIu32 " extensions supported for Vulkan\n", n_ext);
 	VkInstance inst = vulkan_instance_or_crash();
+	VkSurfaceKHR surface = window_surface(inst, win);
 	queue_families queues;
-	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, &queues);
-	VkDevice logical = vulkan_logical_device_or_crash(physical, &queues);
-	VkQueue gfx_q = vulkan_graphics_queue(logical, &queues);
+	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, surface, &queues);
+	logical_interface interf = vulkan_logical_device_or_crash(physical, &queues);
+	swapchain swap = swapchain_create(interf.logical, surface, win, &queues, physical);
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
-	vkDestroyDevice(logical, NULL);
+	free(swap.slot);
+	vkDestroySwapchainKHR(interf.logical, swap.chain, NULL);
+	vkDestroyDevice(interf.logical, NULL);
+	vkDestroySurfaceKHR(inst, surface, NULL);
 	vkDestroyInstance(inst, NULL);
 	glfwDestroyWindow(win);
 	glfwTerminate();

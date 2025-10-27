@@ -7,7 +7,7 @@ SAN =
 CPPFLAGS = -MMD -MP -Ibin -Iinc $(LIBCPPFLAGS)
 DEBUG = -ggdb3
 OPT ?=
-WARNING = -Wall -Wextra -Wconversion
+WARNING = -Wall -Wextra -Wconversion -Werror
 CFLAGS = $(SAN) $(DEBUG) $(OPT) $(WARNING)
 LDFLAGS = $(SAN) $(LIBLDFLAGS) -lvulkan -ldl -pthread -lX11 -lXxf86vm -lXrandr -lXi
 
