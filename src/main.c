@@ -8,6 +8,18 @@
 #include <GLFW/glfw3.h>
 
 
+typedef uint32_t u32;
+
+void *xmalloc(size_t sz)
+{
+	void *ptr = malloc(sz);
+	if (!ptr) {
+		fprintf(stderr, "malloc\n");
+		exit(1);
+	}
+	return ptr;
+}
+
 void init_glfw_or_crash()
 {
 	if (glfwInit() != GLFW_TRUE) {
@@ -31,15 +43,16 @@ static const char *const validation = "VK_LAYER_KHRONOS_validation";
 
 void vulkan_validation_layers_or_crash()
 {
-	uint32_t n_lyr;
+	u32 n_lyr;
 	vkEnumerateInstanceLayerProperties(&n_lyr, NULL);
-	VkLayerProperties *lyr = malloc(n_lyr * sizeof *lyr);
+	VkLayerProperties *lyr = xmalloc(n_lyr * sizeof *lyr);
 	vkEnumerateInstanceLayerProperties(&n_lyr, lyr);
 	for (VkLayerProperties *cur = lyr; cur != lyr + n_lyr; cur++) {
 		if (strcmp(validation, cur->layerName) == 0) {
 			return;
 		}
 	}
+	free(lyr);
 	fprintf(stderr, "validation layer '%s' not found\n", validation);
 	exit(1);
 }
@@ -73,6 +86,74 @@ VkInstance vulkan_instance_or_crash()
 	return inst;
 }
 
+typedef struct {
+	u32 graphics;
+	u32 missing;
+} queue_families;
+
+queue_families required_queue_families(VkPhysicalDevice dev)
+{
+	queue_families req;
+	req.missing = 1u;
+	u32 n_qf;
+	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_qf, NULL);
+	VkQueueFamilyProperties *qf = xmalloc(n_qf * sizeof *qf);
+	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_qf, qf);
+	for (u32 i = 0; i < n_qf; i++) {
+		if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+			req.graphics = i;
+			req.missing &= ~1u;
+			break;
+		}
+	}
+	free(qf);
+	return req;
+}
+
+u32 processor_score(VkPhysicalDevice dev)
+{
+	queue_families f = required_queue_families(dev);
+	if (f.missing) {
+		return 0;
+	}
+	VkPhysicalDeviceProperties prop;
+	vkGetPhysicalDeviceProperties(dev, &prop);
+	VkPhysicalDeviceFeatures feat;
+	vkGetPhysicalDeviceFeatures(dev, &feat);
+	u32 score = 1;
+	if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+		score += 0x100;
+	} else if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+		score += 0x10;
+	}
+	printf("%*s assigned score of %" PRIu32 ".\n",
+		(int) VK_MAX_PHYSICAL_DEVICE_NAME_SIZE, prop.deviceName, score);
+	return score;
+}
+
+VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst)
+{
+	VkPhysicalDevice selected = VK_NULL_HANDLE;
+	u32 n_gpu;
+	vkEnumeratePhysicalDevices(inst, &n_gpu, NULL);
+	VkPhysicalDevice *gpu = xmalloc(n_gpu * sizeof *gpu);
+	vkEnumeratePhysicalDevices(inst, &n_gpu, gpu);
+	u32 best_score = 0;
+	for (u32 i = 0; i < n_gpu; i++) {
+		u32 score = processor_score(gpu[i]);
+		if (score > best_score) {
+			best_score = score;
+			selected = gpu[i];
+		}
+	}
+	free(gpu);
+	if (selected == VK_NULL_HANDLE) {
+		fprintf(stderr, "suitable processor not found.\n");
+		exit(1);
+	}
+	return selected;
+}
+
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
@@ -80,11 +161,12 @@ int main()
 {
 	init_glfw_or_crash();
 	GLFWwindow *win = init_window_or_crash(WIDTH, HEIGHT, "Gala");
-	uint32_t n_ext;
+	u32 n_ext;
 	vkEnumerateInstanceExtensionProperties(NULL, &n_ext, NULL);
 	printf("%" PRIu32 " extensions supported for Vulkan\n", n_ext);
 	VkInstance inst = vulkan_instance_or_crash();
-	(void) inst;
+	VkPhysicalDevice dev = vulkan_select_gpu_or_crash(inst);
+	(void) dev;
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
