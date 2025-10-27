@@ -14,6 +14,8 @@ LDFLAGS = $(SAN) $(LIBLDFLAGS) -lvulkan -ldl -pthread -lX11 -lXxf86vm -lXrandr -
 CC = gcc
 LD = gcc
 RM = rm
+SHADERC = glslc
+SHADERCFLAGS =
 
 BIN = main
 BIN_PATH = $(BIN:%=bin/%)
@@ -22,13 +24,15 @@ HDR = $(shell find inc -type f)
 GCH = $(HDR:inc/%=bin/%.gch)
 
 SRC = $(shell find src -type f -regex ".*\.\(c\|cpp\)")
+SRC_SHDR = $(shell find src -type f -regex ".*\.\(vert\|frag\|comp\)")
 SRC_NOMAIN = $(filter-out $(BIN:%=src/%.c),$(SRC))
 OBJ = $(SRC:src/%=bin/%.o)
+SPV = $(SRC_SHDR:src/%=bin/%.spv)
 OBJ_NOMAIN = $(SRC_NOMAIN:src/%=bin/%.o)
 
 DEP = $(SRC:src/%=bin/%.d) $(HDR:inc/%=bin/%.d)
 
-all:: $(BINDIR) $(GCH) $(BIN_PATH)
+all:: $(BINDIR) $(GCH) $(BIN_PATH) $(SPV)
 
 $(BIN_PATH): bin/%: bin/%.c.o $(OBJ_NOMAIN)
 	$(LD) -o $@ $^ $(LDFLAGS)
@@ -38,6 +42,9 @@ bin/%.c.o: src/%.c
 
 bin/%.h.gch: inc/%.h
 	$(CC) $(CPPFLAGS) -c -o $@ $< $(CFLAGS)
+
+bin/%.spv: src/%
+	$(SHADERC) $(SHADERCFLAGS) -o $@ $<
 
 run:: run-main
 
