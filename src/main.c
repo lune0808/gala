@@ -9,6 +9,8 @@
 #include <GLFW/glfw3.h>
 
 
+#define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
+
 typedef uint32_t u32;
 
 void *xmalloc(size_t sz)
@@ -387,6 +389,211 @@ VkSurfaceKHR window_surface(VkInstance inst, GLFWwindow *win)
 	return surface;
 }
 
+typedef struct {
+	void *mem;
+	size_t size;
+} buffer;
+
+buffer load_file_or_crash(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) goto fail_open;
+	long status;
+	status = fseek(f, 0, SEEK_END);
+	if (status != 0) goto io;
+	status = ftell(f);
+	if (status < 0) goto io;
+	size_t sz = (size_t) status;
+	status = fseek(f, 0, SEEK_SET);
+	if (status != 0) goto io;
+	void *buf = malloc(sz);
+	if (!buf) goto io;
+	size_t remaining_sz = sz;
+	for (void *cur = buf; !feof(f);) {
+		size_t amount_read = fread(cur, remaining_sz, 1, f);
+		cur += amount_read;
+		remaining_sz -= amount_read;
+		if (ferror(f)) goto alloc;
+	}
+	fclose(f);
+	return (buffer){ buf, sz };
+alloc:
+	free(buf);
+io:
+	fclose(f);
+fail_open:
+	fprintf(stderr, "load file %s failed\n", path);
+	exit(1);
+}
+
+VkRenderPass render_pass_create_or_crash(VkDevice logical, swapchain swap)
+{
+	VkAttachmentDescription color_attacht = {
+		.format = swap.fmt,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	};
+	VkAttachmentReference color_attacht_ref = {
+		.attachment = 0,
+		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+	VkSubpassDescription subpass_desc = {
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &color_attacht_ref,
+	};
+	VkRenderPassCreateInfo pass_desc = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &color_attacht,
+		.subpassCount = 1,
+		.pSubpasses = &subpass_desc,
+	};
+	VkRenderPass pass;
+	if (vkCreateRenderPass(logical, &pass_desc, NULL, &pass) != VK_SUCCESS) {
+		fprintf(stderr, "vkCreateRenderPass\n");
+		exit(1);
+	}
+	return pass;
+}
+
+VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
+{
+	buffer buf = load_file_or_crash(path);
+	VkShaderModuleCreateInfo desc = {
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = buf.size,
+		.pCode = buf.mem,
+	};
+	VkShaderModule sh;
+	if (vkCreateShaderModule(logical, &desc, NULL, &sh) != VK_SUCCESS) {
+		fprintf(stderr, "build shader %s failed\n", path);
+		exit(1);
+	}
+	free(buf.mem);
+	return sh;
+}
+
+typedef struct {
+	VkPipeline line;
+	VkPipelineLayout layout;
+} pipeline;
+
+pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path, VkDevice logical, VkExtent2D dims, VkRenderPass gpass)
+{
+	VkShaderModule vert_mod = build_shader_module_or_crash(vert_path, logical);
+	VkShaderModule frag_mod = build_shader_module_or_crash(frag_path, logical);
+	VkPipelineShaderStageCreateInfo stg_desc[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = VK_SHADER_STAGE_VERTEX_BIT,
+			.module = vert_mod,
+			.pName = "main",
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+			.module = frag_mod,
+			.pName = "main",
+		}
+	};
+	VkPipelineDynamicStateCreateInfo dyn_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+	};
+	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+	};
+	VkPipelineInputAssemblyStateCreateInfo ia_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		.primitiveRestartEnable = VK_FALSE,
+	};
+	VkPipelineViewportStateCreateInfo vp_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		.viewportCount = 1,
+		.pViewports = &(VkViewport){
+			.x = 0.0f,
+			.y = 0.0f,
+			.width = (float) dims.width,
+			.height = (float) dims.height,
+			.minDepth = 0.0f,
+			.maxDepth = 1.0f,
+		},
+		.scissorCount = 1,
+		.pScissors = &(VkRect2D){
+			.offset = {0, 0},
+			.extent = dims,
+		},
+	};
+	VkPipelineRasterizationStateCreateInfo ras_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		.depthClampEnable = VK_FALSE,
+		.rasterizerDiscardEnable = VK_FALSE,
+		.polygonMode = VK_POLYGON_MODE_FILL,
+		.lineWidth = 1.0f,
+		.cullMode = VK_CULL_MODE_BACK_BIT,
+		.frontFace = VK_FRONT_FACE_CLOCKWISE,
+		.depthBiasEnable = VK_FALSE,
+	};
+	VkPipelineMultisampleStateCreateInfo ms_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		.sampleShadingEnable = VK_FALSE,
+		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+	};
+	VkPipelineColorBlendAttachmentState blend_attach = {
+		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
+				| VK_COLOR_COMPONENT_G_BIT
+				| VK_COLOR_COMPONENT_B_BIT
+				| VK_COLOR_COMPONENT_A_BIT,
+		.blendEnable = VK_FALSE,
+	};
+	VkPipelineColorBlendStateCreateInfo blend_global = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		.logicOpEnable = VK_FALSE,
+		.attachmentCount = 1,
+		.pAttachments = &blend_attach,
+	};
+	VkPipelineLayoutCreateInfo unif_lyt_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+	};
+	VkPipelineLayout unif_lyt;
+	if (vkCreatePipelineLayout(logical, &unif_lyt_desc, NULL, &unif_lyt) != VK_SUCCESS) {
+		fprintf(stderr, "vkCreatePipelineLayout\n");
+		exit(1);
+	}
+
+	VkGraphicsPipelineCreateInfo gpipe_desc = {
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.stageCount = ARRAY_SIZE(stg_desc),
+		.pStages = stg_desc,
+		.pVertexInputState = &vert_lyt_desc,
+		.pInputAssemblyState = &ia_desc,
+		.pViewportState = &vp_desc,
+		.pRasterizationState = &ras_desc,
+		.pMultisampleState = &ms_desc,
+		.pDepthStencilState = NULL,
+		.pColorBlendState = &blend_global,
+		.pDynamicState = &dyn_desc,
+		.layout = unif_lyt,
+		.renderPass = gpass,
+		.subpass = 0,
+	};
+	VkPipeline gpipe;
+	if (vkCreateGraphicsPipelines(logical, VK_NULL_HANDLE, 1, &gpipe_desc, NULL, &gpipe) != VK_SUCCESS) {
+		fprintf(stderr, "vkCreateGraphicsPipeline\n");
+		exit(1);
+	}
+
+	vkDestroyShaderModule(logical, frag_mod, NULL);
+	vkDestroyShaderModule(logical, vert_mod, NULL);
+	return (pipeline){ gpipe, unif_lyt };
+}
+
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
@@ -400,12 +607,17 @@ int main()
 	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, surface, &queues);
 	logical_interface interf = vulkan_logical_device_or_crash(physical, &queues);
 	swapchain swap = swapchain_create(interf.logical, surface, win, &queues, physical);
+	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap);
+	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
 	for (u32 i = 0; i < swap.n_slot; i++) {
 		vkDestroyImageView(interf.logical, swap.view[i], NULL);
 	}
+	vkDestroyPipeline(interf.logical, pipe.line, NULL);
+	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
+	vkDestroyRenderPass(interf.logical, graphics_pass, NULL);
 	free(swap.view);
 	free(swap.slot);
 	vkDestroySwapchainKHR(interf.logical, swap.chain, NULL);
