@@ -13,6 +13,8 @@
 
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
 
+#define MAX_FRAMES_RENDERING (2)
+
 typedef uint32_t u32;
 
 noreturn void crash(const char *reason, ...)
@@ -618,18 +620,16 @@ VkCommandPool command_pool_create_or_crash(VkDevice logical, u32 queue)
 	return pool;
 }
 
-VkCommandBuffer command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool)
+void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool, u32 cnt, VkCommandBuffer *cmd)
 {
 	VkCommandBufferAllocateInfo buf_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 		.commandPool = pool,
 		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = 1,
+		.commandBufferCount = cnt,
 	};
-	VkCommandBuffer buf;
-	if (vkAllocateCommandBuffers(logical, &buf_desc, &buf) != VK_SUCCESS)
+	if (vkAllocateCommandBuffers(logical, &buf_desc, cmd) != VK_SUCCESS)
 		crash("vkCreateCommandBuffers");
-	return buf;
 }
 
 void command_buffer_record_or_crash(VkCommandBuffer buf, VkRenderPass pass, swapchain swap, pipeline pipe, VkFramebuffer *framebuf)
@@ -657,12 +657,13 @@ void command_buffer_record_or_crash(VkCommandBuffer buf, VkRenderPass pass, swap
 }
 
 typedef struct {
-	VkSemaphore present_ready;
-	VkSemaphore render_done;
-	VkFence rendering;
+	VkSemaphore present_ready[MAX_FRAMES_RENDERING];
+	VkSemaphore render_done[MAX_FRAMES_RENDERING];
+	VkFence rendering[MAX_FRAMES_RENDERING];
 } fences;
 
-fences sync_create_or_crash(VkDevice logical)
+void sync_create_or_crash(VkDevice logical, u32 cnt,
+	VkSemaphore *present_ready, VkSemaphore *render_done, VkFence *rendering)
 {
 	VkSemaphoreCreateInfo sem_desc = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -671,43 +672,52 @@ fences sync_create_or_crash(VkDevice logical)
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
-	fences sync;
-	if (vkCreateSemaphore(logical, &sem_desc, NULL, &sync.present_ready) != VK_SUCCESS)
-		crash("vkCreateSemaphore");
-	if (vkCreateSemaphore(logical, &sem_desc, NULL, &sync.render_done) != VK_SUCCESS)
-		crash("vkCreateSemaphore");
-	if (vkCreateFence(logical, &fence_desc, NULL, &sync.rendering) != VK_SUCCESS)
-		crash("vkCreateFence");
-	return sync;
+	for (u32 i = 0; i < cnt; i++) {
+		if (vkCreateSemaphore(logical, &sem_desc, NULL, &present_ready[i]) != VK_SUCCESS)
+			crash("vkCreateSemaphore");
+		if (vkCreateSemaphore(logical, &sem_desc, NULL, &render_done[i]) != VK_SUCCESS)
+			crash("vkCreateSemaphore");
+		if (vkCreateFence(logical, &fence_desc, NULL, &rendering[i]) != VK_SUCCESS)
+			crash("vkCreateFence");
+	}
 }
 
-void draw_or_crash(logical_interface interf, fences sync, swapchain swap, VkFramebuffer *framebuf,
-	VkCommandBuffer graphics_commands, VkRenderPass graphics_pass, pipeline pipe)
+typedef struct {
+	fences sync;
+	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
+} draw_calls;
+
+void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index,
+	swapchain swap, VkFramebuffer *framebuf, VkRenderPass graphics_pass, pipeline pipe)
 {
-	vkWaitForFences(interf.logical, 1, &sync.rendering, VK_TRUE, UINT64_MAX);
-	vkResetFences(interf.logical, 1, &sync.rendering);
+	// cpu wait for current frame to be done rendering
+	vkWaitForFences(interf.logical, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
+	vkResetFences(interf.logical, 1, &info.sync.rendering[upcoming_index]);
 	vkAcquireNextImageKHR(interf.logical, swap.chain, UINT64_MAX,
-		sync.present_ready, VK_NULL_HANDLE, &swap.current);
-	vkResetCommandBuffer(graphics_commands, 0);
-	command_buffer_record_or_crash(graphics_commands, graphics_pass, swap, pipe, framebuf);
+		info.sync.present_ready[upcoming_index], VK_NULL_HANDLE, &swap.current);
+	// recording commands for next frame
+	vkResetCommandBuffer(info.commands[upcoming_index], 0);
+	command_buffer_record_or_crash(info.commands[upcoming_index], graphics_pass, swap, pipe, framebuf);
+	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &sync.present_ready,
+		.pWaitSemaphores = &info.sync.present_ready[upcoming_index],
 		.pWaitDstStageMask = &(VkPipelineStageFlags){
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 		},
 		.commandBufferCount = 1,
-		.pCommandBuffers = &graphics_commands,
+		.pCommandBuffers = &info.commands[upcoming_index],
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &sync.render_done,
+		.pSignalSemaphores = &info.sync.render_done[upcoming_index],
 	};
-	if (vkQueueSubmit(interf.graphics, 1, &submission_desc, sync.rendering) != VK_SUCCESS)
+	if (vkQueueSubmit(interf.graphics, 1, &submission_desc, info.sync.rendering[upcoming_index]) != VK_SUCCESS)
 		crash("vkQueueSubmit");
+	// present rendered image
 	VkPresentInfoKHR present_desc = {
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &sync.render_done,
+		.pWaitSemaphores = &info.sync.render_done[upcoming_index],
 		.swapchainCount = 1,
 		.pSwapchains = &swap.chain,
 		.pImageIndices = &swap.current,
@@ -732,20 +742,33 @@ int main()
 	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap, graphics_pass);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical, queues.graphics);
-	VkCommandBuffer graphics_commands = command_buffer_create_or_crash(interf.logical, pool);
-	fences sync = sync_create_or_crash(interf.logical);
+	draw_calls draws;
+        command_buffer_create_or_crash(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
+	sync_create_or_crash(interf.logical, MAX_FRAMES_RENDERING,
+		draws.sync.present_ready, draws.sync.render_done, draws.sync.rendering);
+
+	u32 cpu_frame = 0;
 	while (!glfwWindowShouldClose(win)) {
+		double beg_time = glfwGetTime();
 		glfwPollEvents();
-		draw_or_crash(interf, sync, swap, framebuf,
-			graphics_commands, graphics_pass, pipe);
+		draw_or_crash(interf, draws, cpu_frame % MAX_FRAMES_RENDERING,
+			swap, framebuf, graphics_pass, pipe);
+		cpu_frame++;
+		double end_time = glfwGetTime();
+		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 	}
+	printf("\n");
+
 	vkDeviceWaitIdle(interf.logical);
-	vkDestroySemaphore(interf.logical, sync.present_ready, NULL);
-	vkDestroySemaphore(interf.logical, sync.render_done, NULL);
-	vkDestroyFence(interf.logical, sync.rendering, NULL);
-	vkFreeCommandBuffers(interf.logical, pool, 1, &graphics_commands);
+	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
+		vkDestroySemaphore(interf.logical, draws.sync.present_ready[i], NULL);
+		vkDestroySemaphore(interf.logical, draws.sync.render_done[i], NULL);
+		vkDestroyFence(interf.logical, draws.sync.rendering[i], NULL);
+	}
+	vkFreeCommandBuffers(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(interf.logical, pool, NULL);
 	vkDestroyPipeline(interf.logical, pipe.line, NULL);
+
 	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
 	for (u32 i = 0; i < swap.n_slot; i++) {
 		vkDestroyImageView(interf.logical, swap.view[i], NULL);
