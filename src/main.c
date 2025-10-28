@@ -1,7 +1,9 @@
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdnoreturn.h>
 #include <inttypes.h>
 #include <stdint.h>
 #include <assert.h>
@@ -13,32 +15,34 @@
 
 typedef uint32_t u32;
 
+noreturn void crash(const char *reason, ...)
+{
+	va_list args;
+	va_start(args, reason);
+	vfprintf(stderr, reason, args);
+	fputs("", stderr);
+	va_end(args);
+	exit(1);
+
+}
+
 void *xmalloc(size_t sz)
 {
 	void *ptr = malloc(sz);
-	if (!ptr) {
-		fprintf(stderr, "malloc\n");
-		exit(1);
-	}
+	if (!ptr) crash("malloc");
 	return ptr;
 }
 
 void init_glfw_or_crash()
 {
-	if (glfwInit() != GLFW_TRUE) {
-		fprintf(stderr, "glfwInit\n");
-		exit(1);
-	}
+	if (glfwInit() != GLFW_TRUE) crash("glfwInit");
 }
 
 GLFWwindow *init_window_or_crash(int width, int height, const char *title)
 {
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	GLFWwindow *win = glfwCreateWindow(width, height, title, NULL, NULL);
-	if (!win) {
-		fprintf(stderr, "glfwCreateWindow\n");
-		exit(1);
-	}
+	if (!win) crash("glfwCreateWindow");
 	return win;
 }
 
@@ -56,8 +60,7 @@ void vulkan_validation_layers_or_crash()
 		}
 	}
 	free(lyr);
-	fprintf(stderr, "validation layer '%s' not found\n", validation);
-	exit(1);
+	crash("validation layer '%s' not found");
 }
 
 VkInstance vulkan_instance_or_crash()
@@ -82,10 +85,7 @@ VkInstance vulkan_instance_or_crash()
 	inst_desc.ppEnabledExtensionNames = glfwGetRequiredInstanceExtensions(&inst_desc.enabledExtensionCount);
 	VkInstance inst;
 	VkResult status = vkCreateInstance(&inst_desc, NULL, &inst);
-	if (status != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateInstance\n");
-		exit(1);
-	}
+	if (status != VK_SUCCESS) crash("vkCreateInstance");
 	return inst;
 }
 
@@ -209,10 +209,8 @@ VkImageView swapchain_view(VkDevice logical, VkImage img, VkFormat fmt)
 		.subresourceRange.layerCount = 1,
 	};
 	VkImageView view;
-	if (vkCreateImageView(logical, &view_desc, NULL, &view) != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateInstance\n");
-		exit(1);
-	}
+	if (vkCreateImageView(logical, &view_desc, NULL, &view) != VK_SUCCESS)
+		crash("vkCreateImageView");
 	return view;
 }
 
@@ -245,10 +243,8 @@ VkRenderPass render_pass_create_or_crash(VkDevice logical, VkFormat fmt)
 		.pSubpasses = &subpass_desc,
 	};
 	VkRenderPass pass;
-	if (vkCreateRenderPass(logical, &pass_desc, NULL, &pass) != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateRenderPass\n");
-		exit(1);
-	}
+	if (vkCreateRenderPass(logical, &pass_desc, NULL, &pass) != VK_SUCCESS)
+		crash("vkCreateRenderPass");
 	return pass;
 }
 
@@ -259,6 +255,7 @@ typedef struct {
 	u32 n_slot;
 	VkFormat fmt;
 	VkExtent2D dim;
+	// current;
 } swapchain;
 
 swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *win, queue_families *fam, VkPhysicalDevice dev)
@@ -291,10 +288,8 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 		swap_desc.pQueueFamilyIndices = fam->array_repr;
 	}
 	swapchain swap;
-	if (vkCreateSwapchainKHR(logical, &swap_desc, NULL, &swap.chain) != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateSwapchainKHR\n");
-		exit(1);
-	}
+	if (vkCreateSwapchainKHR(logical, &swap_desc, NULL, &swap.chain) != VK_SUCCESS)
+		crash("vkCreateSwapchainKHR");
 	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, NULL);
 	swap.slot = xmalloc(swap.n_slot * sizeof *swap.slot);
 	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, swap.slot);
@@ -320,10 +315,8 @@ VkFramebuffer *framebuf_attach(VkDevice logical, swapchain swap, VkRenderPass pa
 			.height = swap.dim.height,
 			.layers = 1,
 		};
-		if (vkCreateFramebuffer(logical, &framebuf_desc, NULL, &framebuf[i]) != VK_SUCCESS) {
-			fprintf(stderr, "vkCreateFramebuffer\n");
-			exit(1);
-		}
+		if (vkCreateFramebuffer(logical, &framebuf_desc, NULL, &framebuf[i]) != VK_SUCCESS)
+			crash("vkCreateFramebuffer");
 	}
 	return framebuf;
 }
@@ -384,10 +377,8 @@ VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, VkSurfaceKHR surfac
 		}
 	}
 	free(gpu);
-	if (selected == VK_NULL_HANDLE) {
-		fprintf(stderr, "suitable processor not found.\n");
-		exit(1);
-	}
+	if (selected == VK_NULL_HANDLE)
+		crash("suitable processor not found.");
 	return selected;
 }
 
@@ -427,10 +418,8 @@ logical_interface vulkan_logical_device_or_crash(VkPhysicalDevice physical, queu
 		.ppEnabledLayerNames = &validation,
 	};
 	logical_interface i;
-	if (vkCreateDevice(physical, &logdev_desc, NULL, &i.logical) != VK_SUCCESS) {
-		fprintf(stderr, "couldn't create vulkan logical device");
-		exit(1);
-	}
+	if (vkCreateDevice(physical, &logdev_desc, NULL, &i.logical) != VK_SUCCESS)
+		crash("vkCreateDevice");
 	vkGetDeviceQueue(i.logical, queues->graphics, 0, &i.graphics);
 	vkGetDeviceQueue(i.logical, queues->present, !sep_queues, &i.present);
 	return i;
@@ -439,10 +428,8 @@ logical_interface vulkan_logical_device_or_crash(VkPhysicalDevice physical, queu
 VkSurfaceKHR window_surface(VkInstance inst, GLFWwindow *win)
 {
 	VkSurfaceKHR surface;
-	if (glfwCreateWindowSurface(inst, win, NULL, &surface) != VK_SUCCESS) {
-		fprintf(stderr, "couldn't create a surface to present to\n");
-		exit(1);
-	}
+	if (glfwCreateWindowSurface(inst, win, NULL, &surface) != VK_SUCCESS)
+		crash("couldn't create a surface to present to");
 	return surface;
 }
 
@@ -479,8 +466,7 @@ alloc:
 io:
 	fclose(f);
 fail_open:
-	fprintf(stderr, "load file %s failed\n", path);
-	exit(1);
+	crash("load file '%s' failed");
 }
 
 VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
@@ -492,10 +478,8 @@ VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
 		.pCode = buf.mem,
 	};
 	VkShaderModule sh;
-	if (vkCreateShaderModule(logical, &desc, NULL, &sh) != VK_SUCCESS) {
-		fprintf(stderr, "build shader %s failed\n", path);
-		exit(1);
-	}
+	if (vkCreateShaderModule(logical, &desc, NULL, &sh) != VK_SUCCESS)
+		crash("build shader %s failed", path);
 	free(buf.mem);
 	return sh;
 }
@@ -583,10 +567,8 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 	};
 	VkPipelineLayout unif_lyt;
-	if (vkCreatePipelineLayout(logical, &unif_lyt_desc, NULL, &unif_lyt) != VK_SUCCESS) {
-		fprintf(stderr, "vkCreatePipelineLayout\n");
-		exit(1);
-	}
+	if (vkCreatePipelineLayout(logical, &unif_lyt_desc, NULL, &unif_lyt) != VK_SUCCESS)
+		crash("vkCreatePipelineLayout");
 
 	VkGraphicsPipelineCreateInfo gpipe_desc = {
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -605,14 +587,63 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.subpass = 0,
 	};
 	VkPipeline gpipe;
-	if (vkCreateGraphicsPipelines(logical, VK_NULL_HANDLE, 1, &gpipe_desc, NULL, &gpipe) != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateGraphicsPipeline\n");
-		exit(1);
-	}
+	if (vkCreateGraphicsPipelines(logical, VK_NULL_HANDLE, 1, &gpipe_desc, NULL, &gpipe) != VK_SUCCESS)
+		crash("vkCreateGraphicsPipelines");
 
 	vkDestroyShaderModule(logical, frag_mod, NULL);
 	vkDestroyShaderModule(logical, vert_mod, NULL);
 	return (pipeline){ gpipe, unif_lyt };
+}
+
+VkCommandPool command_pool_create_or_crash(VkDevice logical, u32 family)
+{
+	VkCommandPoolCreateInfo pool_desc = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		.queueFamilyIndex = family,
+	};
+	VkCommandPool pool;
+	if (vkCreateCommandPool(logical, &pool_desc, NULL, &pool) != VK_SUCCESS)
+		crash("vkCreateCommandPool");
+	return pool;
+}
+
+VkCommandBuffer command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool)
+{
+	VkCommandBufferAllocateInfo buf_desc = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = pool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+	VkCommandBuffer buf;
+	if (vkAllocateCommandBuffers(logical, &buf_desc, &buf) != VK_SUCCESS)
+		crash("vkCreateCommandBuffers");
+	return buf;
+}
+
+void command_buffer_record_or_crash(VkCommandBuffer buf, VkRenderPass pass, swapchain swap, pipeline pipe)
+{
+	VkCommandBufferBeginInfo cmd_desc = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	};
+	if (vkBeginCommandBuffer(buf, &cmd_desc) != VK_SUCCESS)
+		crash("vkBeginCommandBuffer");
+	VkRenderPassBeginInfo pass_desc = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = pass,
+		.framebuffer = 0, // swap.current,
+		.renderArea.offset = {0, 0},
+		.renderArea.extent = swap.dim,
+		.clearValueCount = 1,
+		.pClearValues = &(VkClearValue){{{0.0, 0.0, 0.0, 1.0f}}},
+	};
+	vkCmdBeginRenderPass(buf, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdBindPipeline(buf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
+	vkCmdDraw(buf, 3, 1, 0, 0);
+	vkCmdEndRenderPass(buf);
+	if (vkEndCommandBuffer(buf) != VK_SUCCESS)
+		crash("vkEndCommandBuffer");
 }
 
 static const int WIDTH = 800;
@@ -631,9 +662,14 @@ int main()
 	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap.fmt);
 	VkFramebuffer *framebuf = framebuf_attach(interf.logical, swap, graphics_pass);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
+	VkCommandPool pool = command_pool_create_or_crash(interf.logical, queues.graphics);
+	VkCommandBuffer graphics_commands = command_buffer_create_or_crash(interf.logical, pool);
+	// command_buffer_record_or_crash(graphics_commands, graphics_pass, swap, pipe);
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
+	vkFreeCommandBuffers(interf.logical, pool, 1, &graphics_commands);
+	vkDestroyCommandPool(interf.logical, pool, NULL);
 	vkDestroyPipeline(interf.logical, pipe.line, NULL);
 	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
 	for (u32 i = 0; i < swap.n_slot; i++) {
