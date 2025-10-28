@@ -191,15 +191,6 @@ VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR sur
 	return selected;
 }
 
-typedef struct {
-	VkSwapchainKHR chain;
-	VkImage *slot;
-	VkImageView *view;
-	u32 n_slot;
-	VkFormat fmt;
-	VkExtent2D dim;
-} swapchain;
-
 VkImageView swapchain_view(VkDevice logical, VkImage img, VkFormat fmt)
 {
 	VkImageViewCreateInfo view_desc = {
@@ -224,6 +215,51 @@ VkImageView swapchain_view(VkDevice logical, VkImage img, VkFormat fmt)
 	}
 	return view;
 }
+
+VkRenderPass render_pass_create_or_crash(VkDevice logical, VkFormat fmt)
+{
+	VkAttachmentDescription color_attacht = {
+		.format = fmt,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	};
+	VkAttachmentReference color_attacht_ref = {
+		.attachment = 0,
+		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+	VkSubpassDescription subpass_desc = {
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &color_attacht_ref,
+	};
+	VkRenderPassCreateInfo pass_desc = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &color_attacht,
+		.subpassCount = 1,
+		.pSubpasses = &subpass_desc,
+	};
+	VkRenderPass pass;
+	if (vkCreateRenderPass(logical, &pass_desc, NULL, &pass) != VK_SUCCESS) {
+		fprintf(stderr, "vkCreateRenderPass\n");
+		exit(1);
+	}
+	return pass;
+}
+
+typedef struct {
+	VkSwapchainKHR chain;
+	VkImage *slot;
+	VkImageView *view;
+	u32 n_slot;
+	VkFormat fmt;
+	VkExtent2D dim;
+} swapchain;
 
 swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *win, queue_families *fam, VkPhysicalDevice dev)
 {
@@ -269,6 +305,27 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 		swap.view[i] = swapchain_view(logical, swap.slot[i], fmt.format);
 	}
 	return swap;
+}
+
+VkFramebuffer *framebuf_attach(VkDevice logical, swapchain swap, VkRenderPass pass)
+{
+	VkFramebuffer *framebuf = xmalloc(swap.n_slot * sizeof *framebuf);
+	for (u32 i = 0; i < swap.n_slot; i++) {
+		VkFramebufferCreateInfo framebuf_desc = {
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = pass,
+			.attachmentCount = 1,
+			.pAttachments = &swap.view[i],
+			.width = swap.dim.width,
+			.height = swap.dim.height,
+			.layers = 1,
+		};
+		if (vkCreateFramebuffer(logical, &framebuf_desc, NULL, &framebuf[i]) != VK_SUCCESS) {
+			fprintf(stderr, "vkCreateFramebuffer\n");
+			exit(1);
+		}
+	}
+	return framebuf;
 }
 
 static const char *const swapchain_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
@@ -426,42 +483,6 @@ fail_open:
 	exit(1);
 }
 
-VkRenderPass render_pass_create_or_crash(VkDevice logical, swapchain swap)
-{
-	VkAttachmentDescription color_attacht = {
-		.format = swap.fmt,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-	};
-	VkAttachmentReference color_attacht_ref = {
-		.attachment = 0,
-		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-	};
-	VkSubpassDescription subpass_desc = {
-		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-		.colorAttachmentCount = 1,
-		.pColorAttachments = &color_attacht_ref,
-	};
-	VkRenderPassCreateInfo pass_desc = {
-		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = 1,
-		.pAttachments = &color_attacht,
-		.subpassCount = 1,
-		.pSubpasses = &subpass_desc,
-	};
-	VkRenderPass pass;
-	if (vkCreateRenderPass(logical, &pass_desc, NULL, &pass) != VK_SUCCESS) {
-		fprintf(stderr, "vkCreateRenderPass\n");
-		exit(1);
-	}
-	return pass;
-}
-
 VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
 {
 	buffer buf = load_file_or_crash(path);
@@ -607,16 +628,18 @@ int main()
 	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, surface, &queues);
 	logical_interface interf = vulkan_logical_device_or_crash(physical, &queues);
 	swapchain swap = swapchain_create(interf.logical, surface, win, &queues, physical);
-	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap);
+	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap.fmt);
+	VkFramebuffer *framebuf = framebuf_attach(interf.logical, swap, graphics_pass);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
 	while (!glfwWindowShouldClose(win)) {
 		glfwPollEvents();
 	}
-	for (u32 i = 0; i < swap.n_slot; i++) {
-		vkDestroyImageView(interf.logical, swap.view[i], NULL);
-	}
 	vkDestroyPipeline(interf.logical, pipe.line, NULL);
 	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
+	for (u32 i = 0; i < swap.n_slot; i++) {
+		vkDestroyImageView(interf.logical, swap.view[i], NULL);
+		vkDestroyFramebuffer(interf.logical, framebuf[i], NULL);
+	}
 	vkDestroyRenderPass(interf.logical, graphics_pass, NULL);
 	free(swap.view);
 	free(swap.slot);
