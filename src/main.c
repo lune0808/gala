@@ -738,8 +738,8 @@ int main()
 		glfwPollEvents();
 		draw_or_crash(interf, sync, swap, framebuf,
 			graphics_commands, graphics_pass, pipe);
-		vkDeviceWaitIdle(interf.logical);
 	}
+	vkDeviceWaitIdle(interf.logical);
 	vkDestroySemaphore(interf.logical, sync.present_ready, NULL);
 	vkDestroySemaphore(interf.logical, sync.render_done, NULL);
 	vkDestroyFence(interf.logical, sync.rendering, NULL);
