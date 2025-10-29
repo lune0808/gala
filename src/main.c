@@ -676,12 +676,13 @@ typedef struct {
 	VkDeviceSize size;
 } vulkan_buffer;
 
-vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical, VkDeviceSize size)
+vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical,
+	VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags cons)
 {
 	VkBufferCreateInfo buf_desc = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = size,
-		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 	VkBuffer buf;
@@ -695,7 +696,7 @@ vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical
 		.memoryTypeIndex = constrain_memory_type_or_crash(
 			physical,
 			reqs.memoryTypeBits,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+			cons
 		),
 	};
 	VkDeviceMemory mem;
@@ -839,7 +840,9 @@ int main()
 	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap.fmt);
 	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap, graphics_pass);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
-	vulkan_buffer vbuf = buffer_create_or_crash(interf.logical, physical, sizeof vertices);
+	vulkan_buffer vbuf = buffer_create_or_crash(interf.logical, physical,
+		sizeof vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(interf.logical, vbuf, vertices);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical, queues.graphics);
 	draw_calls draws;
