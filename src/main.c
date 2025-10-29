@@ -640,11 +640,12 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 	return (pipeline){ gpipe, unif_lyt };
 }
 
-VkCommandPool command_pool_create_or_crash(VkDevice logical, u32 queue)
+VkCommandPool command_pool_create_or_crash(VkDevice logical,
+	u32 queue, VkCommandPoolCreateFlags flags)
 {
 	VkCommandPoolCreateInfo pool_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		.flags = flags,
 		.queueFamilyIndex = queue,
 	};
 	VkCommandPool pool;
@@ -714,7 +715,8 @@ void buffer_populate(VkDevice logical, vulkan_buffer b, void *data)
 	vkUnmapMemory(logical, b.mem);
 }
 
-void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool, u32 cnt, VkCommandBuffer *cmd)
+void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool,
+	u32 cnt, VkCommandBuffer *cmd)
 {
 	VkCommandBufferAllocateInfo buf_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -724,6 +726,52 @@ void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool, u32 cn
 	};
 	if (vkAllocateCommandBuffers(logical, &buf_desc, cmd) != VK_SUCCESS)
 		crash("vkCreateCommandBuffers");
+}
+
+void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
+	u32 iqueue, VkQueue queue)
+{
+	VkCommandPool pool = command_pool_create_or_crash(logical,
+		iqueue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+	VkCommandBuffer cmd;
+	command_buffer_create_or_crash(logical, pool, 1, &cmd);
+	VkCommandBufferBeginInfo cmd_begin = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	vkBeginCommandBuffer(cmd, &cmd_begin);
+	VkBufferCopy copy_desc = {
+		.srcOffset = 0,
+		.dstOffset = 0,
+		.size = dst.size,
+	};
+	vkCmdCopyBuffer(cmd, src.buf, dst.buf, 1, &copy_desc);
+	vkEndCommandBuffer(cmd);
+	VkSubmitInfo submission = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmd,
+	};
+	vkQueueSubmit(queue, 1, &submission, VK_NULL_HANDLE);
+	vkQueueWaitIdle(queue);
+	vkFreeCommandBuffers(logical, pool, 1, &cmd);
+	vkDestroyCommandPool(logical, pool, NULL);
+}
+
+vulkan_buffer data_upload(VkDevice logical, VkPhysicalDevice physical,
+	VkDeviceSize size, void *data, u32 iqueue, VkQueue queue)
+{
+	vulkan_buffer staging = buffer_create_or_crash(logical, physical,
+		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	buffer_populate(logical, staging, data);
+	vulkan_buffer uploaded = buffer_create_or_crash(logical, physical,
+		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	data_transfer(logical, uploaded, staging, iqueue, queue);
+	vkDestroyBuffer(logical, staging.buf, NULL);
+	vkFreeMemory(logical, staging.mem, NULL);
+	return uploaded;
 }
 
 void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
@@ -840,11 +888,10 @@ int main()
 	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap.fmt);
 	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap, graphics_pass);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
-	vulkan_buffer vbuf = buffer_create_or_crash(interf.logical, physical,
-		sizeof vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	buffer_populate(interf.logical, vbuf, vertices);
-	VkCommandPool pool = command_pool_create_or_crash(interf.logical, queues.graphics);
+	vulkan_buffer vbuf = data_upload(interf.logical, physical,
+		sizeof vertices, vertices, queues.graphics, interf.graphics);
+	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
+		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
         command_buffer_create_or_crash(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
 	sync_create_or_crash(interf.logical, MAX_FRAMES_RENDERING,
