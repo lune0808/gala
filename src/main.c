@@ -17,6 +17,7 @@
 #define MAX_FRAMES_RENDERING (2)
 
 typedef uint32_t u32;
+typedef uint16_t u16;
 
 noreturn void crash(const char *reason, ...)
 {
@@ -507,10 +508,16 @@ typedef struct {
 	float col[3];
 } vertex;
 
-vertex vertices[] = {
-	{ { 0.0f, -0.5f }, {1.0f, 0.0f, 0.0f} },
-	{ { 0.5f,  0.5f }, {0.0f, 1.0f, 0.0f} },
-	{ {-0.5f,  0.5f }, {0.0f, 0.0f, 1.0f} },
+static const vertex vertices[] = {
+	{ { -0.5f, -0.5f }, {1.0f, 0.0f, 0.0f} },
+	{ { +0.5f, -0.5f }, {0.0f, 1.0f, 0.0f} },
+	{ { +0.5f, +0.5f }, {0.0f, 0.0f, 1.0f} },
+	{ { -0.5f, +0.5f }, {1.0f, 1.0f, 1.0f} },
+};
+
+static const u16 indices[] = {
+	0, 1, 2,
+	2, 3, 0,
 };
 
 pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path, VkDevice logical, VkExtent2D dims, VkRenderPass gpass)
@@ -707,7 +714,7 @@ vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical
 	return (vulkan_buffer){ buf, mem, size };
 }
 
-void buffer_populate(VkDevice logical, vulkan_buffer b, void *data)
+void buffer_populate(VkDevice logical, vulkan_buffer b, const void *data)
 {
 	void *mapped;
 	vkMapMemory(logical, b.mem, 0, b.size, 0, &mapped);
@@ -759,14 +766,14 @@ void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 }
 
 vulkan_buffer data_upload(VkDevice logical, VkPhysicalDevice physical,
-	VkDeviceSize size, void *data, u32 iqueue, VkQueue queue)
+	VkDeviceSize size, const void *data, u32 iqueue, VkQueue queue, VkBufferUsageFlags usage)
 {
 	vulkan_buffer staging = buffer_create_or_crash(logical, physical,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(logical, staging, data);
 	vulkan_buffer uploaded = buffer_create_or_crash(logical, physical,
-		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|usage,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	data_transfer(logical, uploaded, staging, iqueue, queue);
 	vkDestroyBuffer(logical, staging.buf, NULL);
@@ -775,7 +782,8 @@ vulkan_buffer data_upload(VkDevice logical, VkPhysicalDevice physical,
 }
 
 void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
-	swapchain swap, pipeline pipe, VkFramebuffer *framebuf, vulkan_buffer vbuf)
+	swapchain swap, pipeline pipe, VkFramebuffer *framebuf,
+	vulkan_buffer vbuf, vulkan_buffer ibuf)
 {
 	VkCommandBufferBeginInfo cmd_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -794,8 +802,9 @@ void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
 	vkCmdBeginRenderPass(cbuf, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
-	u32 vert_cnt = (u32) vbuf.size / sizeof(vertex);
-	vkCmdDraw(cbuf, vert_cnt, 1, 0, 0);
+	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT16);
+	u32 indx_cnt = (u32) ARRAY_SIZE(indices);
+	vkCmdDrawIndexed(cbuf, indx_cnt, 1, 0, 0, 0);
 	vkCmdEndRenderPass(cbuf);
 	if (vkEndCommandBuffer(cbuf) != VK_SUCCESS)
 		crash("vkEndCommandBuffer");
@@ -834,7 +843,7 @@ typedef struct {
 
 void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index,
 	swapchain swap, VkFramebuffer *framebuf, VkRenderPass graphics_pass,
-	pipeline pipe, vulkan_buffer vbuf)
+	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf)
 {
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(interf.logical, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
@@ -844,7 +853,7 @@ void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index
 	// recording commands for next frame
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
 	command_buffer_record_or_crash(info.commands[upcoming_index],
-		graphics_pass, swap, pipe, framebuf, vbuf);
+		graphics_pass, swap, pipe, framebuf, vbuf, ibuf);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -889,7 +898,11 @@ int main()
 	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap, graphics_pass);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
 	vulkan_buffer vbuf = data_upload(interf.logical, physical,
-		sizeof vertices, vertices, queues.graphics, interf.graphics);
+		sizeof vertices, vertices, queues.graphics, interf.graphics,
+		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	vulkan_buffer ibuf = data_upload(interf.logical, physical,
+		sizeof indices, indices, queues.graphics, interf.graphics,
+		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
 		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
@@ -902,7 +915,7 @@ int main()
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
 		draw_or_crash(interf, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			swap, framebuf, graphics_pass, pipe, vbuf);
+			swap, framebuf, graphics_pass, pipe, vbuf, ibuf);
 		cpu_frame++;
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
@@ -917,6 +930,8 @@ int main()
 	}
 	vkFreeCommandBuffers(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(interf.logical, pool, NULL);
+	vkFreeMemory(interf.logical, ibuf.mem, NULL);
+	vkDestroyBuffer(interf.logical, ibuf.buf, NULL);
 	vkFreeMemory(interf.logical, vbuf.mem, NULL);
 	vkDestroyBuffer(interf.logical, vbuf.buf, NULL);
 	vkDestroyPipeline(interf.logical, pipe.line, NULL);
