@@ -11,6 +11,7 @@
 #include <assert.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <cglm/cglm.h>
 
 
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
@@ -20,8 +21,6 @@
 typedef uint32_t u32;
 typedef uint16_t u16;
 typedef float f32;
-typedef f32 vec4[4];
-typedef vec4 mat4[4];
 
 noreturn void crash(const char *reason, ...)
 {
@@ -938,29 +937,11 @@ void sync_create_or_crash(VkDevice logical, u32 cnt,
 void transforms_upload(void *to, float width, float height)
 {
 	float time = (float) glfwGetTime();
-	float c = cosf(time);
-	float s = sinf(time);
 	float asp = width / height;
-	transforms tfm = {
-		.model = {
-			{    c,    s, 0.0f, 0.0f, },
-			{   -s,    c, 0.0f, 0.0f, },
-			{ 0.0f, 0.0f, 1.0f, 0.0f, },
-			{ 0.0f, 0.0f, 0.0f, 1.0f, },
-		},
-		.view = {
-			{ 1.0f, 0.0f, 0.0f, 0.0f, },
-			{ 0.0f,  asp, 0.0f, 0.0f, },
-			{ 0.0f, 0.0f, 1.0f, 0.0f, },
-			{ 0.0f, 0.0f, 0.0f, 1.0f, },
-		},
-		.proj = {
-			{ 1.0f, 0.0f, 0.0f, 0.0f, },
-			{ 0.0f, 1.0f, 0.0f, 0.0f, },
-			{ 0.0f, 0.0f, 1.0f, 0.0f, },
-			{ 0.0f, 0.0f, 0.0f, 1.0f, },
-		},
-	};
+	transforms tfm;
+	glm_rotate_make(tfm.model, time, (vec3){ 0.0f, 0.0f, 1.0f });
+	glm_scale_make(tfm.view, (vec3){ 1.0f, asp, 1.0f });
+	glm_scale_make(tfm.proj, (vec3){ 1.0f, 1.0f, 1.0f });
 	memcpy(to, &tfm, sizeof tfm);
 }
 
