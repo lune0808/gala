@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -18,6 +19,9 @@
 
 typedef uint32_t u32;
 typedef uint16_t u16;
+typedef float f32;
+typedef f32 vec4[4];
+typedef vec4 mat4[4];
 
 noreturn void crash(const char *reason, ...)
 {
@@ -499,8 +503,146 @@ VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
 }
 
 typedef struct {
+	mat4 model;
+	mat4 view;
+	mat4 proj;
+} transforms;
+
+VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical)
+{
+	VkDescriptorSetLayoutBinding bind_desc = {
+		.binding = 0,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = 1,
+		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+	};
+	VkDescriptorSetLayoutCreateInfo lyt_desc = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.bindingCount = 1,
+		.pBindings = &bind_desc,
+	};
+	VkDescriptorSetLayout lyt;
+	if (vkCreateDescriptorSetLayout(logical, &lyt_desc, NULL, &lyt) != VK_SUCCESS)
+		crash("vkCreateDescriptorSetLayout");
+	return lyt;
+}
+
+VkDescriptorPool descr_pool_create_or_crash(VkDevice logical)
+{
+	VkDescriptorPoolCreateInfo pool_desc = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.poolSizeCount = 1,
+		.pPoolSizes = &(VkDescriptorPoolSize){
+			.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
+		},
+		.maxSets = (u32) MAX_FRAMES_RENDERING,
+	};
+	VkDescriptorPool pool;
+	if (vkCreateDescriptorPool(logical, &pool_desc, NULL, &pool) != VK_SUCCESS)
+		crash("vkCreateDescriptorPool");
+	return pool;
+}
+
+VkDescriptorSet *descr_set_create_or_crash(VkDevice logical,
+	VkDescriptorPool pool, VkDescriptorSetLayout lyt)
+{
+	VkDescriptorSetLayout lyt_dupes[MAX_FRAMES_RENDERING];
+	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
+		lyt_dupes[i] = lyt;
+	}
+	VkDescriptorSet *set = malloc(MAX_FRAMES_RENDERING * sizeof *set);
+	VkDescriptorSetAllocateInfo alloc_desc = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = pool,
+		.descriptorSetCount = (u32) MAX_FRAMES_RENDERING,
+		.pSetLayouts = lyt_dupes,
+	};
+	if (vkAllocateDescriptorSets(logical, &alloc_desc, set) != VK_SUCCESS)
+		crash("vkAllocateDescriptorSets");
+	return set;
+}
+
+u32 constrain_memory_type_or_crash(VkPhysicalDevice physical, u32 allowed, VkMemoryPropertyFlags cons)
+{
+	// TODO: we don't really need to access the physical device
+	// this late. this could be queried once at device creation
+	VkPhysicalDeviceMemoryProperties props;
+	vkGetPhysicalDeviceMemoryProperties(physical, &props);
+
+	for (u32 i = 0; i < props.memoryTypeCount; i++) {
+		if (allowed & (1u << i)) {
+			if ((props.memoryTypes[i].propertyFlags & cons) == cons) {
+				return i;
+			}
+		}
+	}
+	crash("no suitable memory type available");
+}
+
+typedef struct {
+	VkBuffer buf;
+	VkDeviceMemory mem;
+	VkDeviceSize size;
+} vulkan_buffer;
+
+vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical,
+	VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags cons)
+{
+	VkBufferCreateInfo buf_desc = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = size,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+	VkBuffer buf;
+	if (vkCreateBuffer(logical, &buf_desc, NULL, &buf) != VK_SUCCESS)
+		crash("vkCreateBuffer");
+	VkMemoryRequirements reqs;
+	vkGetBufferMemoryRequirements(logical, buf, &reqs);
+	VkMemoryAllocateInfo mem_desc = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = reqs.size,
+		.memoryTypeIndex = constrain_memory_type_or_crash(
+			physical,
+			reqs.memoryTypeBits,
+			cons
+		),
+	};
+	VkDeviceMemory mem;
+	if (vkAllocateMemory(logical, &mem_desc, NULL, &mem) != VK_SUCCESS)
+		crash("vkAllocateMemory");
+	vkBindBufferMemory(logical, buf, mem, 0);
+	return (vulkan_buffer){ buf, mem, size };
+}
+
+void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf)
+{
+	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
+		VkDescriptorBufferInfo buf_desc = {
+			.buffer = buf.buf,
+			.offset = i * sizeof(transforms),
+			.range = sizeof(transforms),
+		};
+		VkWriteDescriptorSet write_desc = {
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = set[i],
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &buf_desc,
+		};
+		vkUpdateDescriptorSets(logical, 1, &write_desc, 0, NULL);
+	}
+}
+
+typedef struct {
 	VkPipeline line;
 	VkPipelineLayout layout;
+	VkDescriptorSetLayout set_layout;
+	VkDescriptorPool dpool;
+	VkDescriptorSet *set;
 } pipeline;
 
 typedef struct {
@@ -520,7 +662,8 @@ static const u16 indices[] = {
 	2, 3, 0,
 };
 
-pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path, VkDevice logical, VkExtent2D dims, VkRenderPass gpass)
+pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
+	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, vulkan_buffer ubuf)
 {
 	VkShaderModule vert_mod = build_shader_module_or_crash(vert_path, logical);
 	VkShaderModule frag_mod = build_shader_module_or_crash(frag_path, logical);
@@ -615,8 +758,15 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.attachmentCount = 1,
 		.pAttachments = &blend_attach,
 	};
+	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create_or_crash(logical);
+	VkDescriptorPool dpool = descr_pool_create_or_crash(logical);
+	VkDescriptorSet *set = descr_set_create_or_crash(logical,
+		dpool, set_lyt);
+	descr_set_config(logical, set, ubuf);
 	VkPipelineLayoutCreateInfo unif_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &set_lyt,
 	};
 	VkPipelineLayout unif_lyt;
 	if (vkCreatePipelineLayout(logical, &unif_lyt_desc, NULL, &unif_lyt) != VK_SUCCESS)
@@ -644,7 +794,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 
 	vkDestroyShaderModule(logical, frag_mod, NULL);
 	vkDestroyShaderModule(logical, vert_mod, NULL);
-	return (pipeline){ gpipe, unif_lyt };
+	return (pipeline){ gpipe, unif_lyt, set_lyt, dpool, set };
 }
 
 VkCommandPool command_pool_create_or_crash(VkDevice logical,
@@ -659,59 +809,6 @@ VkCommandPool command_pool_create_or_crash(VkDevice logical,
 	if (vkCreateCommandPool(logical, &pool_desc, NULL, &pool) != VK_SUCCESS)
 		crash("vkCreateCommandPool");
 	return pool;
-}
-
-u32 constrain_memory_type_or_crash(VkPhysicalDevice physical, u32 allowed, VkMemoryPropertyFlags cons)
-{
-	// TODO: we don't really need to access the physical device
-	// this late. this could be queried once at device creation
-	VkPhysicalDeviceMemoryProperties props;
-	vkGetPhysicalDeviceMemoryProperties(physical, &props);
-
-	for (u32 i = 0; i < props.memoryTypeCount; i++) {
-		if (allowed & (1u << i)) {
-			if ((props.memoryTypes[i].propertyFlags & cons) == cons) {
-				return i;
-			}
-		}
-	}
-	crash("no suitable memory type available");
-}
-
-typedef struct {
-	VkBuffer buf;
-	VkDeviceMemory mem;
-	VkDeviceSize size;
-} vulkan_buffer;
-
-vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical,
-	VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags cons)
-{
-	VkBufferCreateInfo buf_desc = {
-		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = size,
-		.usage = usage,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-	};
-	VkBuffer buf;
-	if (vkCreateBuffer(logical, &buf_desc, NULL, &buf) != VK_SUCCESS)
-		crash("vkCreateBuffer");
-	VkMemoryRequirements reqs;
-	vkGetBufferMemoryRequirements(logical, buf, &reqs);
-	VkMemoryAllocateInfo mem_desc = {
-		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-		.allocationSize = reqs.size,
-		.memoryTypeIndex = constrain_memory_type_or_crash(
-			physical,
-			reqs.memoryTypeBits,
-			cons
-		),
-	};
-	VkDeviceMemory mem;
-	if (vkAllocateMemory(logical, &mem_desc, NULL, &mem) != VK_SUCCESS)
-		crash("vkAllocateMemory");
-	vkBindBufferMemory(logical, buf, mem, 0);
-	return (vulkan_buffer){ buf, mem, size };
 }
 
 void buffer_populate(VkDevice logical, vulkan_buffer b, const void *data)
@@ -783,7 +880,7 @@ vulkan_buffer data_upload(VkDevice logical, VkPhysicalDevice physical,
 
 void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
 	swapchain swap, pipeline pipe, VkFramebuffer *framebuf,
-	vulkan_buffer vbuf, vulkan_buffer ibuf)
+	vulkan_buffer vbuf, vulkan_buffer ibuf, u32 upcoming_index)
 {
 	VkCommandBufferBeginInfo cmd_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -803,6 +900,8 @@ void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
 	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT16);
+	vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	u32 indx_cnt = (u32) ARRAY_SIZE(indices);
 	vkCmdDrawIndexed(cbuf, indx_cnt, 1, 0, 0, 0);
 	vkCmdEndRenderPass(cbuf);
@@ -836,6 +935,35 @@ void sync_create_or_crash(VkDevice logical, u32 cnt,
 	}
 }
 
+void transforms_upload(void *to, float width, float height)
+{
+	float time = (float) glfwGetTime();
+	float c = cosf(time);
+	float s = sinf(time);
+	float asp = width / height;
+	transforms tfm = {
+		.model = {
+			{    c,    s, 0.0f, 0.0f, },
+			{   -s,    c, 0.0f, 0.0f, },
+			{ 0.0f, 0.0f, 1.0f, 0.0f, },
+			{ 0.0f, 0.0f, 0.0f, 1.0f, },
+		},
+		.view = {
+			{ 1.0f, 0.0f, 0.0f, 0.0f, },
+			{ 0.0f,  asp, 0.0f, 0.0f, },
+			{ 0.0f, 0.0f, 1.0f, 0.0f, },
+			{ 0.0f, 0.0f, 0.0f, 1.0f, },
+		},
+		.proj = {
+			{ 1.0f, 0.0f, 0.0f, 0.0f, },
+			{ 0.0f, 1.0f, 0.0f, 0.0f, },
+			{ 0.0f, 0.0f, 1.0f, 0.0f, },
+			{ 0.0f, 0.0f, 0.0f, 1.0f, },
+		},
+	};
+	memcpy(to, &tfm, sizeof tfm);
+}
+
 typedef struct {
 	fences sync;
 	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
@@ -843,7 +971,7 @@ typedef struct {
 
 void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index,
 	swapchain swap, VkFramebuffer *framebuf, VkRenderPass graphics_pass,
-	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf)
+	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, transforms *umapped)
 {
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(interf.logical, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
@@ -852,8 +980,9 @@ void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index
 		info.sync.present_ready[upcoming_index], VK_NULL_HANDLE, &swap.current);
 	// recording commands for next frame
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
+	transforms_upload(&umapped[upcoming_index], (float) swap.dim.width, (float) swap.dim.height);
 	command_buffer_record_or_crash(info.commands[upcoming_index],
-		graphics_pass, swap, pipe, framebuf, vbuf, ibuf);
+		graphics_pass, swap, pipe, framebuf, vbuf, ibuf, upcoming_index);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -896,13 +1025,20 @@ int main()
 	swapchain swap = swapchain_create(interf.logical, surface, win, &queues, physical);
 	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap.fmt);
 	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap, graphics_pass);
-	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv", interf.logical, swap.dim, graphics_pass);
+	vulkan_buffer ubuf = buffer_create_or_crash(interf.logical, physical,
+		MAX_FRAMES_RENDERING * sizeof(transforms),
+		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
+		interf.logical, swap.dim, graphics_pass, ubuf);
 	vulkan_buffer vbuf = data_upload(interf.logical, physical,
 		sizeof vertices, vertices, queues.graphics, interf.graphics,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	vulkan_buffer ibuf = data_upload(interf.logical, physical,
 		sizeof indices, indices, queues.graphics, interf.graphics,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+	void *umapped;
+	vkMapMemory(interf.logical, ubuf.mem, 0, ubuf.size, 0, &umapped);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
 		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
@@ -915,7 +1051,7 @@ int main()
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
 		draw_or_crash(interf, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			swap, framebuf, graphics_pass, pipe, vbuf, ibuf);
+			swap, framebuf, graphics_pass, pipe, vbuf, ibuf, umapped);
 		cpu_frame++;
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
@@ -930,12 +1066,16 @@ int main()
 	}
 	vkFreeCommandBuffers(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(interf.logical, pool, NULL);
+	vkDestroyBuffer(interf.logical, ubuf.buf, NULL);
+	vkFreeMemory(interf.logical, ubuf.mem, NULL);
 	vkFreeMemory(interf.logical, ibuf.mem, NULL);
 	vkDestroyBuffer(interf.logical, ibuf.buf, NULL);
 	vkFreeMemory(interf.logical, vbuf.mem, NULL);
 	vkDestroyBuffer(interf.logical, vbuf.buf, NULL);
 	vkDestroyPipeline(interf.logical, pipe.line, NULL);
 	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
+	vkDestroyDescriptorPool(interf.logical, pipe.dpool, NULL);
+	vkDestroyDescriptorSetLayout(interf.logical, pipe.set_layout, NULL);
 	for (u32 i = 0; i < swap.n_slot; i++) {
 		vkDestroyImageView(interf.logical, swap.view[i], NULL);
 		vkDestroyFramebuffer(interf.logical, framebuf[i], NULL);
