@@ -118,15 +118,12 @@ queue_families required_queue_families(VkPhysicalDevice dev, VkSurfaceKHR surfac
 	VkQueueFamilyProperties *qf = xmalloc(n_qf * sizeof *qf);
 	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_qf, qf);
 	for (u32 i = 0; i < n_qf; i++) {
-		if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-			req.graphics = i;
-			req.missing &= ~1u;
-		}
 		VkBool32 presentable;
 		vkGetPhysicalDeviceSurfaceSupportKHR(dev, i, surface, &presentable);
-		if (presentable) {
+		if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT && presentable) {
+			req.graphics = i;
 			req.present = i;
-			req.missing &= ~2u;
+			req.missing &= ~3u;
 		}
 	}
 	free(qf);
@@ -895,6 +892,8 @@ image load_image(const char *path)
 typedef struct {
 	VkImage img;
 	VkDeviceMemory mem;
+	u32 width;
+	u32 height;
 } vulkan_image;
 
 vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
@@ -928,16 +927,16 @@ vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
 		.memoryTypeIndex = constrain_memory_type_or_crash(
 			physical,
 			reqs.memoryTypeBits,
-			prop);
+			prop),
 	};
 	VkDeviceMemory mem;
 	if (vkAllocateMemory(logical, &alloc_desc, NULL, &mem) != VK_SUCCESS)
 		crash("vkAllocateMemory");
-	vkBindImageMemory(logical, buf, mem, 0);
-	return (vulkan_image){ vulkan_img, mem };
+	vkBindImageMemory(logical, vulkan_img, mem, 0);
+	return (vulkan_image){ vulkan_img, mem, width, height };
 }
 
-void image_barrier(VkCommandBuffer cmd, VkImage img, VkFormat fmt,
+void image_barrier(VkCommandBuffer cmd, VkImage img,
 	VkImageLayout prev, VkImageLayout next)
 {
 	VkImageMemoryBarrier barrier = {
@@ -947,6 +946,7 @@ void image_barrier(VkCommandBuffer cmd, VkImage img, VkFormat fmt,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = img,
+		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.subresourceRange.baseMipLevel = 0,
 		.subresourceRange.levelCount = 1,
 		.subresourceRange.baseArrayLayer = 0,
@@ -989,11 +989,11 @@ void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image img)
 		.imageOffset = {0, 0, 0},
 		.imageExtent = {img.width, img.height, 1},
 	};
-	vkCmdCopyBufferToImage(cmd, buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	vkCmdCopyBufferToImage(cmd, buf.buf, img.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
 
 vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img,
-	u32 xfer_queue)
+	u32 ixfer_queue, VkQueue xfer_queue)
 {
 	VkDeviceSize size = (VkDeviceSize) img.width * (VkDeviceSize) img.height * 4ul;
 	vulkan_buffer staging = buffer_create_or_crash(logical, physical,
@@ -1006,7 +1006,7 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL);
 	VkCommandPool pool = command_pool_create_or_crash(logical,
-		xfer_queue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+		ixfer_queue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
 	command_buffer_create_or_crash(logical, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
@@ -1014,21 +1014,21 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	};
 	vkBeginCommandBuffer(cmd, &cmd_begin);
-	VkBufferCopy copy_desc = { .size = size };
-	image_barrier(cmd, vimg, VK_FORMAT_R8G8B8A8_SRGB,
+	image_barrier(cmd, vimg.img,
 		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	image_transfer(cmd, staging, vimg);
-	image_barrier(cmd, vimg, VK_FORMAT_R8G8B8A8_SRGB,
+	image_barrier(cmd, vimg.img,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	VkSubmitInfo submission = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.commandBufferCount = 1,
 		.pCommandBuffers = &cmd,
 	};
+	vkEndCommandBuffer(cmd);
 	vkQueueSubmit(xfer_queue, 1, &submission, VK_NULL_HANDLE);
 	vkQueueWaitIdle(xfer_queue);
 	vkFreeCommandBuffers(logical, pool, 1, &cmd);
-	vkDestroyBuffer(logical, staging, NULL);
+	vkDestroyBuffer(logical, staging.buf, NULL);
 	vkFreeMemory(logical, staging.mem, NULL);
 	vkDestroyCommandPool(logical, pool, NULL);
 	return vimg;
@@ -1177,7 +1177,7 @@ int main()
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	void *umapped;
 	vulkan_image tex_image = image_upload(interf.logical, physical,
-		load_image("res/sky_bottom.png"), interf.graphics);
+		load_image("res/sky_bottom.png"), queues.graphics, interf.graphics);
 	vkMapMemory(interf.logical, ubuf.mem, 0, ubuf.size, 0, &umapped);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
 		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
