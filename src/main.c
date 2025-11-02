@@ -12,6 +12,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <cglm/cglm.h>
+#include <stb/stb_image.h>
 
 
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
@@ -877,6 +878,162 @@ vulkan_buffer data_upload(VkDevice logical, VkPhysicalDevice physical,
 	return uploaded;
 }
 
+typedef struct {
+	int width;
+	int height;
+	void *mem;
+} image;
+
+image load_image(const char *path)
+{
+	int w, h, ch;
+	void *ptr = stbi_load(path, &w, &h, &ch, 4);
+	if (!ptr) crash("stbi_load");
+	return (image){ w, h, ptr };
+}
+
+typedef struct {
+	VkImage img;
+	VkDeviceMemory mem;
+} vulkan_image;
+
+vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
+	VkFormat fmt, u32 width, u32 height, VkImageUsageFlags usage,
+	VkMemoryPropertyFlags prop, VkImageTiling tiling)
+{
+	VkImageCreateInfo img_desc = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.extent.width = width,
+		.extent.height = height,
+		.extent.depth = 1u,
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.format = fmt,
+		.tiling = tiling,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.usage = usage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+	};
+	VkImage vulkan_img;
+	if (vkCreateImage(logical, &img_desc, NULL, &vulkan_img) != VK_SUCCESS)
+		crash("vkCreateImage");
+
+	VkMemoryRequirements reqs;
+	vkGetImageMemoryRequirements(logical, vulkan_img, &reqs);
+	VkMemoryAllocateInfo alloc_desc = {
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = reqs.size,
+		.memoryTypeIndex = constrain_memory_type_or_crash(
+			physical,
+			reqs.memoryTypeBits,
+			prop);
+	};
+	VkDeviceMemory mem;
+	if (vkAllocateMemory(logical, &alloc_desc, NULL, &mem) != VK_SUCCESS)
+		crash("vkAllocateMemory");
+	vkBindImageMemory(logical, buf, mem, 0);
+	return (vulkan_image){ vulkan_img, mem };
+}
+
+void image_barrier(VkCommandBuffer cmd, VkImage img, VkFormat fmt,
+	VkImageLayout prev, VkImageLayout next)
+{
+	VkImageMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.oldLayout = prev,
+		.newLayout = next,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = img,
+		.subresourceRange.baseMipLevel = 0,
+		.subresourceRange.levelCount = 1,
+		.subresourceRange.baseArrayLayer = 0,
+		.subresourceRange.layerCount = 1,
+	};
+	VkPipelineStageFlags rel_stg, acq_stg;
+	if (prev == VK_IMAGE_LAYOUT_UNDEFINED) {
+		rel_stg = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		barrier.srcAccessMask = 0;
+	} else if (prev == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+		rel_stg = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	} else {
+		crash("unimplemented image transition source");
+	}
+	if (next == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+		acq_stg = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	} else if (next == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+		acq_stg = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	} else {
+		crash("unimplemented image transition destination");
+	}
+	vkCmdPipelineBarrier(cmd,
+		rel_stg, acq_stg, 0 /* TODO: VK_DEPENDENCY_BY_REGION_BIT */,
+		0, NULL, 0, NULL, 1, &barrier);
+}
+
+void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image img)
+{
+	VkBufferImageCopy region = {
+		.bufferOffset = 0,
+		.bufferRowLength = 0,
+		.bufferImageHeight = 0,
+		.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.imageSubresource.mipLevel = 0,
+		.imageSubresource.baseArrayLayer = 0,
+		.imageSubresource.layerCount = 1,
+		.imageOffset = {0, 0, 0},
+		.imageExtent = {img.width, img.height, 1},
+	};
+	vkCmdCopyBufferToImage(cmd, buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+}
+
+vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img,
+	u32 xfer_queue)
+{
+	VkDeviceSize size = (VkDeviceSize) img.width * (VkDeviceSize) img.height * 4ul;
+	vulkan_buffer staging = buffer_create_or_crash(logical, physical,
+		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	buffer_populate(logical, staging, img.mem);
+	stbi_image_free(img.mem);
+	vulkan_image vimg = vulkan_image_create(logical, physical,
+		VK_FORMAT_R8G8B8A8_SRGB, (u32) img.width, (u32) img.height,
+		VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL);
+	VkCommandPool pool = command_pool_create_or_crash(logical,
+		xfer_queue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+	VkCommandBuffer cmd;
+	command_buffer_create_or_crash(logical, pool, 1, &cmd);
+	VkCommandBufferBeginInfo cmd_begin = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	vkBeginCommandBuffer(cmd, &cmd_begin);
+	VkBufferCopy copy_desc = { .size = size };
+	image_barrier(cmd, vimg, VK_FORMAT_R8G8B8A8_SRGB,
+		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	image_transfer(cmd, staging, vimg);
+	image_barrier(cmd, vimg, VK_FORMAT_R8G8B8A8_SRGB,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	VkSubmitInfo submission = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmd,
+	};
+	vkQueueSubmit(xfer_queue, 1, &submission, VK_NULL_HANDLE);
+	vkQueueWaitIdle(xfer_queue);
+	vkFreeCommandBuffers(logical, pool, 1, &cmd);
+	vkDestroyBuffer(logical, staging, NULL);
+	vkFreeMemory(logical, staging.mem, NULL);
+	vkDestroyCommandPool(logical, pool, NULL);
+	return vimg;
+}
+
 void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
 	swapchain swap, pipeline pipe, VkFramebuffer *framebuf,
 	vulkan_buffer vbuf, vulkan_buffer ibuf, u32 upcoming_index)
@@ -1019,6 +1176,8 @@ int main()
 		sizeof indices, indices, queues.graphics, interf.graphics,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	void *umapped;
+	vulkan_image tex_image = image_upload(interf.logical, physical,
+		load_image("res/sky_bottom.png"), interf.graphics);
 	vkMapMemory(interf.logical, ubuf.mem, 0, ubuf.size, 0, &umapped);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
 		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -1047,6 +1206,8 @@ int main()
 	}
 	vkFreeCommandBuffers(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(interf.logical, pool, NULL);
+	vkDestroyImage(interf.logical, tex_image.img, NULL);
+	vkFreeMemory(interf.logical, tex_image.mem, NULL);
 	vkDestroyBuffer(interf.logical, ubuf.buf, NULL);
 	vkFreeMemory(interf.logical, ubuf.mem, NULL);
 	vkFreeMemory(interf.logical, ibuf.mem, NULL);
