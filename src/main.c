@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -196,17 +195,13 @@ VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR sur
 	return selected;
 }
 
-VkImageView swapchain_view(VkDevice logical, VkImage img, VkFormat fmt)
+VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt)
 {
 	VkImageViewCreateInfo view_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = img,
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
 		.format = fmt,
-		.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
-		.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
 		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.subresourceRange.baseMipLevel = 0,
 		.subresourceRange.levelCount = 1,
@@ -312,7 +307,7 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 	swap.dim = dim;
 	swap.view = xmalloc(swap.n_slot * sizeof *swap.view);
 	for (u32 i = 0; i < swap.n_slot; i++) {
-		swap.view[i] = swapchain_view(logical, swap.slot[i], fmt.format);
+		swap.view[i] = image_view_create(logical, swap.slot[i], fmt.format);
 	}
 	return swap;
 }
@@ -363,13 +358,16 @@ u32 processor_score(VkPhysicalDevice dev, VkSurfaceKHR surface, queue_families *
 	vkGetPhysicalDeviceProperties(dev, &prop);
 	VkPhysicalDeviceFeatures feat;
 	vkGetPhysicalDeviceFeatures(dev, &feat);
+	if (!feat.samplerAnisotropy) {
+		return 0;
+	}
 	u32 score = 1;
 	if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
 		score += 0x100;
 	} else if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
 		score += 0x10;
 	}
-	printf("%*s assigned score of 0x%" PRIx32 ".\n",
+	printf("GPU '%*s' assigned score of 0x%" PRIx32 ".\n",
 		(int) VK_MAX_PHYSICAL_DEVICE_NAME_SIZE, prop.deviceName, score);
 	return score;
 }
@@ -420,7 +418,9 @@ logical_interface vulkan_logical_device_or_crash(VkPhysicalDevice physical, queu
 			.pQueuePriorities = &prio,
 		},
 	};
-	VkPhysicalDeviceFeatures feat = {};
+	VkPhysicalDeviceFeatures feat = {
+		.samplerAnisotropy = VK_TRUE,
+	};
 	bool sep_queues = (queues->present == queues->graphics);
 	VkDeviceCreateInfo logdev_desc = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -507,16 +507,24 @@ typedef struct {
 
 VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical)
 {
-	VkDescriptorSetLayoutBinding bind_desc = {
-		.binding = 0,
-		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-		.descriptorCount = 1,
-		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+	VkDescriptorSetLayoutBinding bind_desc[] = {
+		{
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		},
+		{
+			.binding = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+		}
 	};
 	VkDescriptorSetLayoutCreateInfo lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = 1,
-		.pBindings = &bind_desc,
+		.bindingCount = ARRAY_SIZE(bind_desc),
+		.pBindings = bind_desc,
 	};
 	VkDescriptorSetLayout lyt;
 	if (vkCreateDescriptorSetLayout(logical, &lyt_desc, NULL, &lyt) != VK_SUCCESS)
@@ -524,14 +532,21 @@ VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical)
 	return lyt;
 }
 
+// TODO: this could take a VkDescriptorSetLayoutBinding array instead of being hard coded
 VkDescriptorPool descr_pool_create_or_crash(VkDevice logical)
 {
 	VkDescriptorPoolCreateInfo pool_desc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		.poolSizeCount = 1,
-		.pPoolSizes = &(VkDescriptorPoolSize){
-			.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
+		.poolSizeCount = 2,
+		.pPoolSizes = (VkDescriptorPoolSize[]){
+			{
+				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = (u32) MAX_FRAMES_RENDERING,
+			},
+			{
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = (u32) MAX_FRAMES_RENDERING,
+			},
 		},
 		.maxSets = (u32) MAX_FRAMES_RENDERING,
 	};
@@ -613,7 +628,8 @@ vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical
 	return (vulkan_buffer){ buf, mem, size };
 }
 
-void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf)
+void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf,
+	VkImageView tex_view, VkSampler tex_sm)
 {
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
 		VkDescriptorBufferInfo buf_desc = {
@@ -621,16 +637,33 @@ void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf)
 			.offset = i * sizeof(transforms),
 			.range = sizeof(transforms),
 		};
-		VkWriteDescriptorSet write_desc = {
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = set[i],
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &buf_desc,
+		VkDescriptorImageInfo tex_desc = {
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			.imageView = tex_view,
+			.sampler = tex_sm,
 		};
-		vkUpdateDescriptorSets(logical, 1, &write_desc, 0, NULL);
+		VkWriteDescriptorSet write_desc[] = {
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = set[i],
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.descriptorCount = 1,
+				.pBufferInfo = &buf_desc,
+			},
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = set[i],
+				.dstBinding = 1,
+				.dstArrayElement = 0,
+				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = 1,
+				.pImageInfo = &tex_desc,
+			},
+		};
+		vkUpdateDescriptorSets(logical, ARRAY_SIZE(write_desc), write_desc,
+			0, NULL);
 	}
 }
 
@@ -645,13 +678,14 @@ typedef struct {
 typedef struct {
 	float pos[2];
 	float col[3];
+	float uv[2];
 } vertex;
 
 static const vertex vertices[] = {
-	{ { -0.5f, -0.5f }, {1.0f, 0.0f, 0.0f} },
-	{ { +0.5f, -0.5f }, {0.0f, 1.0f, 0.0f} },
-	{ { +0.5f, +0.5f }, {0.0f, 0.0f, 1.0f} },
-	{ { -0.5f, +0.5f }, {1.0f, 1.0f, 1.0f} },
+	{ { -0.5f, -0.5f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
+	{ { +0.5f, -0.5f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
+	{ { +0.5f, +0.5f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
+	{ { -0.5f, +0.5f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
 };
 
 static const u16 indices[] = {
@@ -660,7 +694,8 @@ static const u16 indices[] = {
 };
 
 pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
-	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, vulkan_buffer ubuf)
+	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, vulkan_buffer ubuf,
+	VkImageView tex_view, VkSampler tex_sm)
 {
 	VkShaderModule vert_mod = build_shader_module_or_crash(vert_path, logical);
 	VkShaderModule frag_mod = build_shader_module_or_crash(frag_path, logical);
@@ -681,6 +716,26 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 	};
+	VkVertexInputAttributeDescription attributes[] = {
+		{
+			.binding = 0,
+			.location = 0,
+			.format = VK_FORMAT_R32G32_SFLOAT,
+			.offset = offsetof(vertex, pos),
+		},
+		{
+			.binding = 0,
+			.location = 1,
+			.format = VK_FORMAT_R32G32B32_SFLOAT,
+			.offset = offsetof(vertex, col),
+		},
+		{
+			.binding = 0,
+			.location = 2,
+			.format = VK_FORMAT_R32G32_SFLOAT,
+			.offset = offsetof(vertex, uv),
+		},
+	};
 	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		.vertexBindingDescriptionCount = 1,
@@ -689,21 +744,8 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 			.stride = sizeof(vertex),
 			.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
 		},
-		.vertexAttributeDescriptionCount = 2,
-		.pVertexAttributeDescriptions = (VkVertexInputAttributeDescription[2]){
-			{
-				.binding = 0,
-				.location = 0,
-				.format = VK_FORMAT_R32G32_SFLOAT,
-				.offset = offsetof(vertex, pos),
-			},
-			{
-				.binding = 0,
-				.location = 1,
-				.format = VK_FORMAT_R32G32B32_SFLOAT,
-				.offset = offsetof(vertex, col),
-			},
-		},
+		.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes),
+		.pVertexAttributeDescriptions = attributes,
 	};
 	VkPipelineInputAssemblyStateCreateInfo ia_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -759,7 +801,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 	VkDescriptorPool dpool = descr_pool_create_or_crash(logical);
 	VkDescriptorSet *set = descr_set_create_or_crash(logical,
 		dpool, set_lyt);
-	descr_set_config(logical, set, ubuf);
+	descr_set_config(logical, set, ubuf, tex_view, tex_sm);
 	VkPipelineLayoutCreateInfo unif_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount = 1,
@@ -1148,6 +1190,34 @@ void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index
 	vkQueuePresentKHR(interf.present, &present_desc);
 }
 
+VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
+{
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(physical, &props);
+	VkSamplerCreateInfo sm_desc = {
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.magFilter = VK_FILTER_LINEAR,
+		.minFilter = VK_FILTER_LINEAR,
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.anisotropyEnable = VK_TRUE,
+		.maxAnisotropy = props.limits.maxSamplerAnisotropy,
+		.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+		.unnormalizedCoordinates = VK_FALSE,
+		.compareEnable = VK_FALSE,
+		.compareOp = VK_COMPARE_OP_ALWAYS,
+		.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+		.mipLodBias = 0.0f,
+		.minLod = 0.0f,
+		.maxLod = 0.0f,
+	};
+	VkSampler sm;
+	if (vkCreateSampler(logical, &sm_desc, NULL, &sm) != VK_SUCCESS)
+		crash("vkCreateSampler");
+	return sm;
+}
+
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
@@ -1167,8 +1237,13 @@ int main()
 		MAX_FRAMES_RENDERING * sizeof(transforms),
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	vulkan_image tex_image = image_upload(interf.logical, physical,
+		load_image("res/sky_bottom.png"), queues.graphics, interf.graphics);
+	VkImageView tex_view = image_view_create(interf.logical, tex_image.img,
+		VK_FORMAT_R8G8B8A8_SRGB);
+	VkSampler sampler = sampler_create_or_crash(interf.logical, physical);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
-		interf.logical, swap.dim, graphics_pass, ubuf);
+		interf.logical, swap.dim, graphics_pass, ubuf, tex_view, sampler);
 	vulkan_buffer vbuf = data_upload(interf.logical, physical,
 		sizeof vertices, vertices, queues.graphics, interf.graphics,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -1176,8 +1251,6 @@ int main()
 		sizeof indices, indices, queues.graphics, interf.graphics,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	void *umapped;
-	vulkan_image tex_image = image_upload(interf.logical, physical,
-		load_image("res/sky_bottom.png"), queues.graphics, interf.graphics);
 	vkMapMemory(interf.logical, ubuf.mem, 0, ubuf.size, 0, &umapped);
 	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
 		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -1206,8 +1279,6 @@ int main()
 	}
 	vkFreeCommandBuffers(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(interf.logical, pool, NULL);
-	vkDestroyImage(interf.logical, tex_image.img, NULL);
-	vkFreeMemory(interf.logical, tex_image.mem, NULL);
 	vkDestroyBuffer(interf.logical, ubuf.buf, NULL);
 	vkFreeMemory(interf.logical, ubuf.mem, NULL);
 	vkFreeMemory(interf.logical, ibuf.mem, NULL);
@@ -1216,6 +1287,10 @@ int main()
 	vkDestroyBuffer(interf.logical, vbuf.buf, NULL);
 	vkDestroyPipeline(interf.logical, pipe.line, NULL);
 	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
+	vkDestroySampler(interf.logical, sampler, NULL);
+	vkDestroyImageView(interf.logical, tex_view, NULL);
+	vkDestroyImage(interf.logical, tex_image.img, NULL);
+	vkFreeMemory(interf.logical, tex_image.mem, NULL);
 	vkDestroyDescriptorPool(interf.logical, pipe.dpool, NULL);
 	vkDestroyDescriptorSetLayout(interf.logical, pipe.set_layout, NULL);
 	for (u32 i = 0; i < swap.n_slot; i++) {

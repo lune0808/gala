@@ -10,9 +10,11 @@ layout(binding = 0) uniform UBO {
 // in attributes
 layout(location = 0) in vec2 pos;
 layout(location = 1) in vec3 col;
+layout(location = 2) in vec2 uv;
 
 // out attributes
 layout(location = 0) out vec3 vert_color;
+layout(location = 1) out vec2 vert_uv;
 
 void main()
 {
@@ -21,5 +23,6 @@ void main()
 		    * transforms.model
 		    * vec4(pos, 0.0, 1.0);
 	vert_color = col;
+	vert_uv = uv;
 }
 
