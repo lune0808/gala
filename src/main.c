@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -776,7 +777,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.lineWidth = 1.0f,
 		.cullMode = VK_CULL_MODE_BACK_BIT,
-		.frontFace = VK_FRONT_FACE_CLOCKWISE,
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.depthBiasEnable = VK_FALSE,
 	};
 	VkPipelineMultisampleStateCreateInfo ms_desc = {
@@ -1139,8 +1140,14 @@ void transforms_upload(void *to, float width, float height)
 	float asp = width / height;
 	transforms tfm;
 	glm_rotate_make(tfm.model, time, (vec3){ 0.0f, 0.0f, 1.0f });
-	glm_scale_make(tfm.view, (vec3){ 1.0f, asp, 1.0f });
-	glm_scale_make(tfm.proj, (vec3){ 1.0f, 1.0f, 1.0f });
+	glm_lookat(
+		(vec3){ 2.0f, 2.0f, 2.0f },
+		(vec3){ 0.0f, 0.0f, 0.0f },
+		(vec3){ 0.0f, 0.0f, 1.0f },
+		tfm.view
+	);
+	glm_perspective((float) M_PI/4.0f, asp, 0.1f, 10.0f, tfm.proj);
+	tfm.proj[1][1] *= -1.0f;
 	memcpy(to, &tfm, sizeof tfm);
 }
 
