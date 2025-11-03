@@ -677,21 +677,27 @@ typedef struct {
 } pipeline;
 
 typedef struct {
-	float pos[2];
-	float col[3];
-	float uv[2];
+	vec3 pos;
+	vec3 col;
+	vec2 uv;
 } vertex;
 
 static const vertex vertices[] = {
-	{ { -0.5f, -0.5f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
-	{ { +0.5f, -0.5f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
-	{ { +0.5f, +0.5f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
-	{ { -0.5f, +0.5f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
+	{ { -0.5f, -0.5f, 0.3f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
+	{ { +0.5f, -0.5f, 0.3f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
+	{ { +0.5f, +0.5f, 0.3f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
+	{ { -0.5f, +0.5f, 0.3f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
+	{ { -0.5f, -0.5f, 0.0f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
+	{ { +0.5f, -0.5f, 0.0f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
+	{ { +0.5f, +0.5f, 0.0f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
+	{ { -0.5f, +0.5f, 0.0f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
 };
 
 static const u16 indices[] = {
 	0, 1, 2,
 	2, 3, 0,
+	4, 5, 6,
+	6, 7, 4,
 };
 
 pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
@@ -721,7 +727,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		{
 			.binding = 0,
 			.location = 0,
-			.format = VK_FORMAT_R32G32_SFLOAT,
+			.format = VK_FORMAT_R32G32B32_SFLOAT,
 			.offset = offsetof(vertex, pos),
 		},
 		{

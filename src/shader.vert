@@ -8,7 +8,7 @@ layout(binding = 0) uniform UBO {
 } transforms;
 
 // in attributes
-layout(location = 0) in vec2 pos;
+layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 col;
 layout(location = 2) in vec2 uv;
 
@@ -21,7 +21,7 @@ void main()
 	gl_Position = transforms.proj
 		    * transforms.view
 		    * transforms.model
-		    * vec4(pos, 0.0, 1.0);
+		    * vec4(pos, 1.0);
 	vert_color = col;
 	vert_uv = uv;
 }
