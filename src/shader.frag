@@ -2,6 +2,7 @@
 
 layout(location = 0) in vec3 vert_color;
 layout(location = 1) in vec2 vert_uv;
+
 layout(location = 0) out vec4 frag_color;
 
 layout(binding = 1) uniform sampler2D tex;

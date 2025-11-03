@@ -28,7 +28,7 @@ noreturn void crash(const char *reason, ...)
 	va_list args;
 	va_start(args, reason);
 	vfprintf(stderr, reason, args);
-	fputs("", stderr);
+	fputc('\n', stderr);
 	va_end(args);
 	exit(1);
 
@@ -196,14 +196,14 @@ VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR sur
 	return selected;
 }
 
-VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt)
+VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt, VkImageAspectFlags kind)
 {
 	VkImageViewCreateInfo view_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = img,
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
 		.format = fmt,
-		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.subresourceRange.aspectMask = kind,
 		.subresourceRange.baseMipLevel = 0,
 		.subresourceRange.levelCount = 1,
 		.subresourceRange.baseArrayLayer = 0,
@@ -215,39 +215,63 @@ VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt)
 	return view;
 }
 
-VkRenderPass render_pass_create_or_crash(VkDevice logical, VkFormat fmt)
+VkRenderPass render_pass_create_or_crash(VkDevice logical, VkFormat fmt,
+	VkFormat depth_fmt)
 {
-	VkAttachmentDescription color_attacht = {
-		.format = fmt,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+	VkAttachmentDescription attacht[] = {
+		{
+			.format = fmt,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		},
+		{
+			.format = depth_fmt,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		},
 	};
 	VkAttachmentReference color_attacht_ref = {
 		.attachment = 0,
 		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 	};
+	VkAttachmentReference depth_attacht_ref = {
+		.attachment = 1,
+		.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+	};
 	VkSubpassDescription subpass_desc = {
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &color_attacht_ref,
+		.pDepthStencilAttachment = &depth_attacht_ref,
 	};
 	VkSubpassDependency draw_dep = {
 		.srcSubpass = VK_SUBPASS_EXTERNAL,
-		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.srcAccessMask = 0,
+		.srcStageMask =
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+		      | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+		.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 		.dstSubpass = 0,
-		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		.dstStageMask =
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+		      | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+		.dstAccessMask =
+			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+		      | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 	};
 	VkRenderPassCreateInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = 1,
-		.pAttachments = &color_attacht,
+		.attachmentCount = ARRAY_SIZE(attacht),
+		.pAttachments = attacht,
 		.subpassCount = 1,
 		.pSubpasses = &subpass_desc,
 		.dependencyCount = 1,
@@ -308,20 +332,55 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 	swap.dim = dim;
 	swap.view = xmalloc(swap.n_slot * sizeof *swap.view);
 	for (u32 i = 0; i < swap.n_slot; i++) {
-		swap.view[i] = image_view_create(logical, swap.slot[i], fmt.format);
+		swap.view[i] = image_view_create(logical, swap.slot[i],
+			fmt.format, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 	return swap;
 }
 
-VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, swapchain swap, VkRenderPass pass)
+VkFormat format_supported(VkPhysicalDevice physical, size_t n_among, VkFormat *among, VkImageTiling tiling, VkFormatFeatureFlags cons)
+{
+	size_t features_offset;
+	switch (tiling) {
+	case VK_IMAGE_TILING_LINEAR:
+		features_offset = offsetof(VkFormatProperties, linearTilingFeatures);
+		break;
+	case VK_IMAGE_TILING_OPTIMAL:
+		features_offset = offsetof(VkFormatProperties, optimalTilingFeatures);
+		break;
+	default:
+		assert(0);
+	}
+	for (size_t i = 0; i < n_among; i++) {
+		VkFormatProperties props;
+		vkGetPhysicalDeviceFormatProperties(physical, among[i], &props);
+		VkFormatFeatureFlags *features = (VkFormatFeatureFlags*) ((char*) &props + features_offset);
+		if ((*features & cons) == cons) {
+			return among[i];
+		}
+	}
+	return VK_FORMAT_UNDEFINED;
+}
+
+bool format_has_stencil(VkFormat fmt)
+{
+	return fmt == VK_FORMAT_D32_SFLOAT_S8_UINT
+	    || fmt == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, swapchain swap, VkRenderPass pass, VkImageView depth_view)
 {
 	VkFramebuffer *framebuf = xmalloc(swap.n_slot * sizeof *framebuf);
 	for (u32 i = 0; i < swap.n_slot; i++) {
+		VkImageView attacht[] = {
+			swap.view[i],
+			depth_view,
+		};
 		VkFramebufferCreateInfo framebuf_desc = {
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 			.renderPass = pass,
-			.attachmentCount = 1,
-			.pAttachments = &swap.view[i],
+			.attachmentCount = ARRAY_SIZE(attacht),
+			.pAttachments = attacht,
 			.width = swap.dim.width,
 			.height = swap.dim.height,
 			.layers = 1,
@@ -791,6 +850,14 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.sampleShadingEnable = VK_FALSE,
 		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
 	};
+	VkPipelineDepthStencilStateCreateInfo ds_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		.depthTestEnable = VK_TRUE,
+		.depthWriteEnable = VK_TRUE,
+		.depthCompareOp = VK_COMPARE_OP_LESS,
+		.depthBoundsTestEnable = VK_FALSE,
+		.stencilTestEnable = VK_FALSE,
+	};
 	VkPipelineColorBlendAttachmentState blend_attach = {
 		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
 				| VK_COLOR_COMPONENT_G_BIT
@@ -827,7 +894,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.pViewportState = &vp_desc,
 		.pRasterizationState = &ras_desc,
 		.pMultisampleState = &ms_desc,
-		.pDepthStencilState = NULL,
+		.pDepthStencilState = &ds_desc,
 		.pColorBlendState = &blend_global,
 		.pDynamicState = &dyn_desc,
 		.layout = unif_lyt,
@@ -941,8 +1008,6 @@ image load_image(const char *path)
 typedef struct {
 	VkImage img;
 	VkDeviceMemory mem;
-	u32 width;
-	u32 height;
 } vulkan_image;
 
 vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
@@ -982,10 +1047,10 @@ vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
 	if (vkAllocateMemory(logical, &alloc_desc, NULL, &mem) != VK_SUCCESS)
 		crash("vkAllocateMemory");
 	vkBindImageMemory(logical, vulkan_img, mem, 0);
-	return (vulkan_image){ vulkan_img, mem, width, height };
+	return (vulkan_image){ vulkan_img, mem };
 }
 
-void image_barrier(VkCommandBuffer cmd, VkImage img,
+void image_layout_transition(VkCommandBuffer cmd, VkImage img,
 	VkImageLayout prev, VkImageLayout next)
 {
 	VkImageMemoryBarrier barrier = {
@@ -1025,7 +1090,8 @@ void image_barrier(VkCommandBuffer cmd, VkImage img,
 		0, NULL, 0, NULL, 1, &barrier);
 }
 
-void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image img)
+void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image img,
+	u32 width, u32 height)
 {
 	VkBufferImageCopy region = {
 		.bufferOffset = 0,
@@ -1036,7 +1102,7 @@ void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image img)
 		.imageSubresource.baseArrayLayer = 0,
 		.imageSubresource.layerCount = 1,
 		.imageOffset = {0, 0, 0},
-		.imageExtent = {img.width, img.height, 1},
+		.imageExtent = {width, height, 1},
 	};
 	vkCmdCopyBufferToImage(cmd, buf.buf, img.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
@@ -1063,10 +1129,10 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	};
 	vkBeginCommandBuffer(cmd, &cmd_begin);
-	image_barrier(cmd, vimg.img,
+	image_layout_transition(cmd, vimg.img,
 		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	image_transfer(cmd, staging, vimg);
-	image_barrier(cmd, vimg.img,
+	image_transfer(cmd, staging, vimg, (u32) img.width, (u32) img.height);
+	image_layout_transition(cmd, vimg.img,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	VkSubmitInfo submission = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1092,14 +1158,18 @@ void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
 	};
 	if (vkBeginCommandBuffer(cbuf, &cmd_desc) != VK_SUCCESS)
 		crash("vkBeginCommandBuffer");
+	VkClearValue clear[] = {
+		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+		[1].depthStencil = {1.0f, 0},
+	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = pass,
 		.framebuffer = framebuf[swap.current],
 		.renderArea.offset = {0, 0},
 		.renderArea.extent = swap.dim,
-		.clearValueCount = 1,
-		.pClearValues = &(VkClearValue){{{0.0, 0.0, 0.0, 1.0f}}},
+		.clearValueCount = ARRAY_SIZE(clear),
+		.pClearValues = clear,
 	};
 	vkCmdBeginRenderPass(cbuf, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
@@ -1231,6 +1301,30 @@ VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
 	return sm;
 }
 
+typedef struct {
+	vulkan_image img;
+	VkImageView view;
+	VkFormat fmt;
+} depth_buffer;
+
+depth_buffer depth_buffer_create(VkDevice logical, VkPhysicalDevice physical, VkExtent2D dims)
+{
+	VkFormat candidates[] = {
+		VK_FORMAT_D32_SFLOAT,
+		VK_FORMAT_D24_UNORM_S8_UINT,
+		VK_FORMAT_D32_SFLOAT_S8_UINT,
+	};
+	VkFormat fmt = format_supported(physical, ARRAY_SIZE(candidates), candidates,
+		VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+	if (fmt == VK_FORMAT_UNDEFINED)
+		crash("no suitable format found for a depth buffer");
+	vulkan_image img = vulkan_image_create(logical, physical, fmt,
+		dims.width, dims.height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL);
+	VkImageView view = image_view_create(logical, img.img, fmt, VK_IMAGE_ASPECT_DEPTH_BIT);
+	return (depth_buffer){ img, view, fmt };
+}
+
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
@@ -1244,8 +1338,11 @@ int main()
 	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, surface, &queues);
 	logical_interface interf = vulkan_logical_device_or_crash(physical, &queues);
 	swapchain swap = swapchain_create(interf.logical, surface, win, &queues, physical);
-	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical, swap.fmt);
-	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap, graphics_pass);
+	depth_buffer db = depth_buffer_create(interf.logical, physical, swap.dim);
+	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical,
+		swap.fmt, db.fmt);
+	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap,
+		graphics_pass, db.view);
 	vulkan_buffer ubuf = buffer_create_or_crash(interf.logical, physical,
 		MAX_FRAMES_RENDERING * sizeof(transforms),
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -1253,7 +1350,7 @@ int main()
 	vulkan_image tex_image = image_upload(interf.logical, physical,
 		load_image("res/sky_bottom.png"), queues.graphics, interf.graphics);
 	VkImageView tex_view = image_view_create(interf.logical, tex_image.img,
-		VK_FORMAT_R8G8B8A8_SRGB);
+		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 	VkSampler sampler = sampler_create_or_crash(interf.logical, physical);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
 		interf.logical, swap.dim, graphics_pass, ubuf, tex_view, sampler);
@@ -1311,6 +1408,9 @@ int main()
 		vkDestroyFramebuffer(interf.logical, framebuf[i], NULL);
 	}
 	vkDestroyRenderPass(interf.logical, graphics_pass, NULL);
+	vkDestroyImageView(interf.logical, db.view, NULL);
+	vkDestroyImage(interf.logical, db.img.img, NULL);
+	vkFreeMemory(interf.logical, db.img.mem, NULL);
 	free(swap.view);
 	free(swap.slot);
 	vkDestroySwapchainKHR(interf.logical, swap.chain, NULL);
