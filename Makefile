@@ -15,7 +15,7 @@ CC = gcc
 LD = gcc
 RM = rm
 SHADERC = glslc
-SHADERCFLAGS =
+SHADERCFLAGS = -MD -Iinc
 
 BIN = main
 BIN_PATH = $(BIN:%=bin/%)

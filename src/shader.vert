@@ -1,11 +1,11 @@
 #version 450 core
 
+#include "shared.h"
+
 // uniform buffer
 layout(binding = 0) uniform UBO {
-	mat4 model;
-	mat4 view;
-	mat4 proj;
-} transforms;
+	transforms_t transforms;
+};
 
 // in attributes
 layout(location = 0) in vec3 pos;

@@ -13,6 +13,7 @@
 #include <GLFW/glfw3.h>
 #include <cglm/cglm.h>
 #include <stb/stb_image.h>
+#include "shared.h"
 
 
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
@@ -560,12 +561,6 @@ VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
 	free(buf.mem);
 	return sh;
 }
-
-typedef struct {
-	mat4 model;
-	mat4 view;
-	mat4 proj;
-} transforms;
 
 VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical)
 {
