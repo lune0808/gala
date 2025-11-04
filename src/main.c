@@ -16,10 +16,12 @@
 
 
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
+#define MAX(a, b) ((a)<(b)? (a): (b))
 
 #define MAX_FRAMES_RENDERING (2)
 
 typedef uint32_t u32;
+typedef int32_t i32;
 typedef uint16_t u16;
 typedef float f32;
 
@@ -196,7 +198,7 @@ VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR sur
 	return selected;
 }
 
-VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt, VkImageAspectFlags kind)
+VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt, VkImageAspectFlags kind, u32 mips)
 {
 	VkImageViewCreateInfo view_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -205,7 +207,7 @@ VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt, VkIma
 		.format = fmt,
 		.subresourceRange.aspectMask = kind,
 		.subresourceRange.baseMipLevel = 0,
-		.subresourceRange.levelCount = 1,
+		.subresourceRange.levelCount = mips,
 		.subresourceRange.baseArrayLayer = 0,
 		.subresourceRange.layerCount = 1,
 	};
@@ -333,7 +335,7 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 	swap.view = xmalloc(swap.n_slot * sizeof *swap.view);
 	for (u32 i = 0; i < swap.n_slot; i++) {
 		swap.view[i] = image_view_create(logical, swap.slot[i],
-			fmt.format, VK_IMAGE_ASPECT_COLOR_BIT);
+			fmt.format, VK_IMAGE_ASPECT_COLOR_BIT, 1u);
 	}
 	return swap;
 }
@@ -1008,11 +1010,19 @@ image load_image(const char *path)
 typedef struct {
 	VkImage img;
 	VkDeviceMemory mem;
+	u32 mips;
 } vulkan_image;
+
+u32 mips_for(u32 width, u32 height)
+{
+	float max_dim = MAX((float) width, (float) height);
+	u32 mips = 1u + (u32) floorf(log2f(max_dim));
+	return mips;
+}
 
 vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
 	VkFormat fmt, u32 width, u32 height, VkImageUsageFlags usage,
-	VkMemoryPropertyFlags prop, VkImageTiling tiling)
+	VkMemoryPropertyFlags prop, VkImageTiling tiling, u32 mips)
 {
 	VkImageCreateInfo img_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1020,7 +1030,7 @@ vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
 		.extent.width = width,
 		.extent.height = height,
 		.extent.depth = 1u,
-		.mipLevels = 1,
+		.mipLevels = mips,
 		.arrayLayers = 1,
 		.format = fmt,
 		.tiling = tiling,
@@ -1047,11 +1057,11 @@ vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
 	if (vkAllocateMemory(logical, &alloc_desc, NULL, &mem) != VK_SUCCESS)
 		crash("vkAllocateMemory");
 	vkBindImageMemory(logical, vulkan_img, mem, 0);
-	return (vulkan_image){ vulkan_img, mem };
+	return (vulkan_image){ vulkan_img, mem, mips };
 }
 
 void image_layout_transition(VkCommandBuffer cmd, VkImage img,
-	VkImageLayout prev, VkImageLayout next)
+	VkImageLayout prev, VkImageLayout next, u32 mips)
 {
 	VkImageMemoryBarrier barrier = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1062,7 +1072,7 @@ void image_layout_transition(VkCommandBuffer cmd, VkImage img,
 		.image = img,
 		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.subresourceRange.baseMipLevel = 0,
-		.subresourceRange.levelCount = 1,
+		.subresourceRange.levelCount = mips,
 		.subresourceRange.baseArrayLayer = 0,
 		.subresourceRange.layerCount = 1,
 	};
@@ -1107,6 +1117,77 @@ void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image img,
 	vkCmdCopyBufferToImage(cmd, buf.buf, img.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
 
+void image_mips_transition(VkCommandBuffer cmd, VkImage img, u32 width, u32 height,
+	u32 mips)
+{
+	VkImageMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.image = img,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.subresourceRange.baseArrayLayer = 0,
+		.subresourceRange.layerCount = 1,
+		.subresourceRange.levelCount = 1,
+	};
+	VkImageBlit blit_desc = {
+		.srcOffsets[0] = { 0, 0, 0 },
+		.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.srcSubresource.baseArrayLayer = 0,
+		.srcSubresource.layerCount = 1,
+		.dstOffsets[0] = { 0, 0, 0 },
+		.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+		.dstSubresource.baseArrayLayer = 0,
+		.dstSubresource.layerCount = 1,
+	};
+	i32 mip_w = (i32) width;
+	i32 mip_h = (i32) height;
+	for (u32 mip = 0; mip < mips-1; mip++) {
+		// transition mip into src layout
+		barrier.subresourceRange.baseMipLevel = mip;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		vkCmdPipelineBarrier(cmd,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			0, 0, NULL, 0, NULL, 1, &barrier
+		);
+		// blit mip into next mip
+		i32 new_mip_w = (mip_w > 1)? mip_w/2: 1;
+		i32 new_mip_h = (mip_h > 1)? mip_h/2: 1;
+		blit_desc.srcOffsets[1] = (VkOffset3D){ mip_w, mip_h, 1 };
+		blit_desc.srcSubresource.mipLevel = mip;
+		blit_desc.dstOffsets[1] = (VkOffset3D){ new_mip_w, new_mip_h, 1 };
+		blit_desc.dstSubresource.mipLevel = mip + 1;
+		vkCmdBlitImage(cmd,
+			img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			1, &blit_desc, VK_FILTER_LINEAR);
+		// wait and transition mip into final state
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(cmd,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0, 0, NULL, 0, NULL, 1, &barrier
+		);
+		mip_w = new_mip_w;
+		mip_h = new_mip_h;
+	}
+	// transition last mip into final state
+	barrier.subresourceRange.baseMipLevel = mips - 1;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	vkCmdPipelineBarrier(cmd,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		0, 0, NULL, 0, NULL, 1, &barrier
+	);
+}
+
 vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img,
 	u32 ixfer_queue, VkQueue xfer_queue)
 {
@@ -1116,10 +1197,18 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(logical, staging, img.mem);
 	stbi_image_free(img.mem);
+	VkFormat fmt = VK_FORMAT_R8G8B8A8_SRGB;
 	vulkan_image vimg = vulkan_image_create(logical, physical,
-		VK_FORMAT_R8G8B8A8_SRGB, (u32) img.width, (u32) img.height,
-		VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL);
+		fmt, (u32) img.width, (u32) img.height,
+		VK_IMAGE_USAGE_TRANSFER_DST_BIT
+	      | VK_IMAGE_USAGE_SAMPLED_BIT
+	      | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL,
+		mips_for((u32) img.width, (u32) img.height));
+	VkFormatProperties props;
+	vkGetPhysicalDeviceFormatProperties(physical, fmt, &props);
+	if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+		crash("vkCmdBlitImage not available for mipmap generation");
 	VkCommandPool pool = command_pool_create_or_crash(logical,
 		ixfer_queue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
@@ -1130,10 +1219,9 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 	};
 	vkBeginCommandBuffer(cmd, &cmd_begin);
 	image_layout_transition(cmd, vimg.img,
-		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, vimg.mips);
 	image_transfer(cmd, staging, vimg, (u32) img.width, (u32) img.height);
-	image_layout_transition(cmd, vimg.img,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	image_mips_transition(cmd, vimg.img, (u32) img.width, (u32) img.height, vimg.mips);
 	VkSubmitInfo submission = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.commandBufferCount = 1,
@@ -1291,9 +1379,8 @@ VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
 		.compareEnable = VK_FALSE,
 		.compareOp = VK_COMPARE_OP_ALWAYS,
 		.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-		.mipLodBias = 0.0f,
 		.minLod = 0.0f,
-		.maxLod = 0.0f,
+		.maxLod = VK_LOD_CLAMP_NONE,
 	};
 	VkSampler sm;
 	if (vkCreateSampler(logical, &sm_desc, NULL, &sm) != VK_SUCCESS)
@@ -1320,8 +1407,8 @@ depth_buffer depth_buffer_create(VkDevice logical, VkPhysicalDevice physical, Vk
 		crash("no suitable format found for a depth buffer");
 	vulkan_image img = vulkan_image_create(logical, physical, fmt,
 		dims.width, dims.height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL);
-	VkImageView view = image_view_create(logical, img.img, fmt, VK_IMAGE_ASPECT_DEPTH_BIT);
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL, 1);
+	VkImageView view = image_view_create(logical, img.img, fmt, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 	return (depth_buffer){ img, view, fmt };
 }
 
@@ -1350,7 +1437,7 @@ int main()
 	vulkan_image tex_image = image_upload(interf.logical, physical,
 		load_image("res/sky_bottom.png"), queues.graphics, interf.graphics);
 	VkImageView tex_view = image_view_create(interf.logical, tex_image.img,
-		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
+		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, tex_image.mips);
 	VkSampler sampler = sampler_create_or_crash(interf.logical, physical);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
 		interf.logical, swap.dim, graphics_pass, ubuf, tex_view, sampler);
