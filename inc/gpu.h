@@ -23,6 +23,8 @@ typedef struct {
 	VkSurfaceKHR window_surface;
 	VkPhysicalDevice physical_device;
 	VkDevice device;
+	VkSurfaceFormatKHR present_surface_fmt;
+	VkPresentModeKHR present_mode;
 	gpu_specs specs;
 } context;
 

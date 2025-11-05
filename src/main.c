@@ -34,44 +34,6 @@ VkExtent2D swapchain_select_resolution(context *ctx, VkSurfaceCapabilitiesKHR *p
 	}
 }
 
-VkSurfaceFormatKHR swapchain_select_pixels(context *ctx)
-{
-	u32 n_fmt;
-	VkPhysicalDevice dev = ctx->physical_device;
-	VkSurfaceKHR surface = ctx->window_surface;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, NULL);
-	VkSurfaceFormatKHR *fmt = xmalloc(n_fmt * sizeof *fmt);
-	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, fmt);
-	VkSurfaceFormatKHR selected = fmt[0];
-	for (u32 i = 0; i < n_fmt; i++) {
-		if (fmt[i].format == VK_FORMAT_B8G8R8A8_SRGB && fmt[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-			selected = fmt[i];
-			break;
-		}
-	}
-	free(fmt);
-	return selected;
-}
-
-VkPresentModeKHR swapchain_select_latency(context *ctx)
-{
-	u32 n_swap;
-	VkPhysicalDevice dev = ctx->physical_device;
-	VkSurfaceKHR surface = ctx->window_surface;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, NULL);
-	VkPresentModeKHR *swap = xmalloc(n_swap * sizeof *swap);
-	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, swap);
-	VkPresentModeKHR selected = VK_PRESENT_MODE_FIFO_KHR;
-	for (u32 i = 0; i < n_swap; i++) {
-		if (swap[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
-			selected = swap[i];
-			break;
-		}
-	}
-	free(swap);
-	return selected;
-}
-
 VkImageView image_view_create(VkDevice logical, VkImage img, VkFormat fmt, VkImageAspectFlags kind, u32 mips)
 {
 	VkImageViewCreateInfo view_desc = {
@@ -174,8 +136,8 @@ swapchain swapchain_create(context *ctx)
 	VkSurfaceKHR surface = ctx->window_surface;
 	VkSurfaceCapabilitiesKHR cap;
 	VkExtent2D dim = swapchain_select_resolution(ctx, &cap);
-	VkPresentModeKHR mode = swapchain_select_latency(ctx);
-	VkSurfaceFormatKHR fmt = swapchain_select_pixels(ctx);
+	VkPresentModeKHR mode = ctx->present_mode;
+	VkSurfaceFormatKHR fmt = ctx->present_surface_fmt;
 	u32 expected_swap_cnt = cap.minImageCount + 1u;
 	VkSwapchainCreateInfoKHR swap_desc = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,

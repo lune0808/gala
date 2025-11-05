@@ -259,6 +259,41 @@ static VkDevice vulkan_logical_device_or_crash(VkPhysicalDevice physical,
 	return device;
 }
 
+static VkSurfaceFormatKHR surface_fmt(VkPhysicalDevice dev, VkSurfaceKHR surface)
+{
+	u32 n_fmt;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, NULL);
+	VkSurfaceFormatKHR *fmt = xmalloc(n_fmt * sizeof *fmt);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, fmt);
+	VkSurfaceFormatKHR selected = fmt[0];
+	for (u32 i = 0; i < n_fmt; i++) {
+		if (fmt[i].format == VK_FORMAT_B8G8R8A8_SRGB
+			&& fmt[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+			selected = fmt[i];
+			break;
+		}
+	}
+	free(fmt);
+	return selected;
+}
+
+static VkPresentModeKHR surface_present_mode(VkPhysicalDevice dev, VkSurfaceKHR surface)
+{
+	u32 n_swap;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, NULL);
+	VkPresentModeKHR *swap = xmalloc(n_swap * sizeof *swap);
+	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, swap);
+	VkPresentModeKHR selected = VK_PRESENT_MODE_FIFO_KHR;
+	for (u32 i = 0; i < n_swap; i++) {
+		if (swap[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+			selected = swap[i];
+			break;
+		}
+	}
+	free(swap);
+	return selected;
+}
+
 context context_init(int width, int height, const char *title)
 {
 	init_glfw_or_crash();
@@ -269,8 +304,13 @@ context context_init(int width, int height, const char *title)
 	VkPhysicalDevice physical_device = vulkan_select_gpu_or_crash(
 		vk_instance, window_surface, &specs);
 	VkDevice device = vulkan_logical_device_or_crash(physical_device, specs);
+	VkSurfaceFormatKHR present_surface_fmt = surface_fmt(
+		physical_device, window_surface);
+	VkPresentModeKHR present_mode = surface_present_mode(
+		physical_device, window_surface);
 	return (context){ window, vk_instance, window_surface,
-		physical_device, device, specs };
+		physical_device, device, present_surface_fmt,
+		present_mode, specs };
 }
 
 void context_fini(context *ctx)
