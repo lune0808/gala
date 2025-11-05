@@ -16,14 +16,15 @@
 
 #define MAX_FRAMES_RENDERING (2)
 
-VkExtent2D swapchain_select_resolution(VkPhysicalDevice dev, VkSurfaceKHR surface, GLFWwindow *win, VkSurfaceCapabilitiesKHR *pcap)
+VkExtent2D swapchain_select_resolution(context *ctx, VkSurfaceCapabilitiesKHR *pcap)
 {
 	VkSurfaceCapabilitiesKHR cap;
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(dev, surface, &cap);
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx->physical_device,
+		ctx->window_surface, &cap);
 	*pcap = cap;
 	if (cap.currentExtent.width == UINT32_MAX) {
 		int width, height;
-		glfwGetFramebufferSize(win, &width, &height);
+		glfwGetFramebufferSize(ctx->window, &width, &height);
 		return (VkExtent2D){
 			CLAMP((u32) width, cap.minImageExtent.width, cap.maxImageExtent.height),
 			CLAMP((u32) height, cap.minImageExtent.height, cap.maxImageExtent.height),
@@ -33,9 +34,11 @@ VkExtent2D swapchain_select_resolution(VkPhysicalDevice dev, VkSurfaceKHR surfac
 	}
 }
 
-VkSurfaceFormatKHR swapchain_select_pixels(VkPhysicalDevice dev, VkSurfaceKHR surface)
+VkSurfaceFormatKHR swapchain_select_pixels(context *ctx)
 {
 	u32 n_fmt;
+	VkPhysicalDevice dev = ctx->physical_device;
+	VkSurfaceKHR surface = ctx->window_surface;
 	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, NULL);
 	VkSurfaceFormatKHR *fmt = xmalloc(n_fmt * sizeof *fmt);
 	vkGetPhysicalDeviceSurfaceFormatsKHR(dev, surface, &n_fmt, fmt);
@@ -50,9 +53,11 @@ VkSurfaceFormatKHR swapchain_select_pixels(VkPhysicalDevice dev, VkSurfaceKHR su
 	return selected;
 }
 
-VkPresentModeKHR swapchain_select_latency(VkPhysicalDevice dev, VkSurfaceKHR surface)
+VkPresentModeKHR swapchain_select_latency(context *ctx)
 {
 	u32 n_swap;
+	VkPhysicalDevice dev = ctx->physical_device;
+	VkSurfaceKHR surface = ctx->window_surface;
 	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, NULL);
 	VkPresentModeKHR *swap = xmalloc(n_swap * sizeof *swap);
 	vkGetPhysicalDeviceSurfacePresentModesKHR(dev, surface, &n_swap, swap);
@@ -168,10 +173,9 @@ swapchain swapchain_create(context *ctx)
 {
 	VkSurfaceKHR surface = ctx->window_surface;
 	VkSurfaceCapabilitiesKHR cap;
-	VkExtent2D dim = swapchain_select_resolution(ctx->physical_device,
-		surface, ctx->window, &cap);
-	VkPresentModeKHR mode = swapchain_select_latency(ctx->physical_device, surface);
-	VkSurfaceFormatKHR fmt = swapchain_select_pixels(ctx->physical_device, surface);
+	VkExtent2D dim = swapchain_select_resolution(ctx, &cap);
+	VkPresentModeKHR mode = swapchain_select_latency(ctx);
+	VkSurfaceFormatKHR fmt = swapchain_select_pixels(ctx);
 	u32 expected_swap_cnt = cap.minImageCount + 1u;
 	VkSwapchainCreateInfoKHR swap_desc = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -1108,10 +1112,9 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	vkQueuePresentKHR(gqueue, &present_desc);
 }
 
-VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
+VkSampler sampler_create_or_crash(context *ctx)
 {
-	VkPhysicalDeviceProperties props;
-	vkGetPhysicalDeviceProperties(physical, &props);
+	VkPhysicalDeviceProperties *props = &ctx->specs->properties;
 	VkSamplerCreateInfo sm_desc = {
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 		.magFilter = VK_FILTER_LINEAR,
@@ -1120,7 +1123,7 @@ VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
 		.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 		.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 		.anisotropyEnable = VK_TRUE,
-		.maxAnisotropy = props.limits.maxSamplerAnisotropy,
+		.maxAnisotropy = props->limits.maxSamplerAnisotropy,
 		.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
 		.unnormalizedCoordinates = VK_FALSE,
 		.compareEnable = VK_FALSE,
@@ -1130,7 +1133,7 @@ VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
 		.maxLod = VK_LOD_CLAMP_NONE,
 	};
 	VkSampler sm;
-	if (vkCreateSampler(logical, &sm_desc, NULL, &sm) != VK_SUCCESS)
+	if (vkCreateSampler(ctx->device, &sm_desc, NULL, &sm) != VK_SUCCESS)
 		crash("vkCreateSampler");
 	return sm;
 }
@@ -1182,7 +1185,7 @@ int main()
 		load_image("res/sky_bottom.png"), igqueue, gqueue);
 	VkImageView tex_view = image_view_create(ctx.device, tex_image.img,
 		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, tex_image.mips);
-	VkSampler sampler = sampler_create_or_crash(ctx.device, ctx.physical_device);
+	VkSampler sampler = sampler_create_or_crash(&ctx);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, swap.dim, graphics_pass, ubuf, tex_view, sampler);
 	vulkan_buffer vbuf = data_upload(&ctx,
