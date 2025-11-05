@@ -382,16 +382,13 @@ VkDescriptorSet *descr_set_create_or_crash(VkDevice logical,
 	return set;
 }
 
-u32 constrain_memory_type_or_crash(VkPhysicalDevice physical, u32 allowed, VkMemoryPropertyFlags cons)
+u32 constrain_memory_type_or_crash(context *ctx, u32 allowed, VkMemoryPropertyFlags cons)
 {
-	// TODO: we don't really need to access the physical device
-	// this late. this could be queried once at device creation
-	VkPhysicalDeviceMemoryProperties props;
-	vkGetPhysicalDeviceMemoryProperties(physical, &props);
+	VkPhysicalDeviceMemoryProperties *props = &ctx->specs->memory;
 
-	for (u32 i = 0; i < props.memoryTypeCount; i++) {
+	for (u32 i = 0; i < props->memoryTypeCount; i++) {
 		if (allowed & (1u << i)) {
-			if ((props.memoryTypes[i].propertyFlags & cons) == cons) {
+			if ((props->memoryTypes[i].propertyFlags & cons) == cons) {
 				return i;
 			}
 		}
@@ -405,7 +402,7 @@ typedef struct {
 	VkDeviceSize size;
 } vulkan_buffer;
 
-vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical,
+vulkan_buffer buffer_create_or_crash(context *ctx,
 	VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags cons)
 {
 	VkBufferCreateInfo buf_desc = {
@@ -415,23 +412,23 @@ vulkan_buffer buffer_create_or_crash(VkDevice logical, VkPhysicalDevice physical
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 	VkBuffer buf;
-	if (vkCreateBuffer(logical, &buf_desc, NULL, &buf) != VK_SUCCESS)
+	if (vkCreateBuffer(ctx->device, &buf_desc, NULL, &buf) != VK_SUCCESS)
 		crash("vkCreateBuffer");
 	VkMemoryRequirements reqs;
-	vkGetBufferMemoryRequirements(logical, buf, &reqs);
+	vkGetBufferMemoryRequirements(ctx->device, buf, &reqs);
 	VkMemoryAllocateInfo mem_desc = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 		.allocationSize = reqs.size,
 		.memoryTypeIndex = constrain_memory_type_or_crash(
-			physical,
+			ctx,
 			reqs.memoryTypeBits,
 			cons
 		),
 	};
 	VkDeviceMemory mem;
-	if (vkAllocateMemory(logical, &mem_desc, NULL, &mem) != VK_SUCCESS)
+	if (vkAllocateMemory(ctx->device, &mem_desc, NULL, &mem) != VK_SUCCESS)
 		crash("vkAllocateMemory");
-	vkBindBufferMemory(logical, buf, mem, 0);
+	vkBindBufferMemory(ctx->device, buf, mem, 0);
 	return (vulkan_buffer){ buf, mem, size };
 }
 
@@ -722,19 +719,19 @@ void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 	vkDestroyCommandPool(logical, pool, NULL);
 }
 
-vulkan_buffer data_upload(VkDevice logical, VkPhysicalDevice physical,
+vulkan_buffer data_upload(context *ctx,
 	VkDeviceSize size, const void *data, u32 iqueue, VkQueue queue, VkBufferUsageFlags usage)
 {
-	vulkan_buffer staging = buffer_create_or_crash(logical, physical,
+	vulkan_buffer staging = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	buffer_populate(logical, staging, data);
-	vulkan_buffer uploaded = buffer_create_or_crash(logical, physical,
+	buffer_populate(ctx->device, staging, data);
+	vulkan_buffer uploaded = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|usage,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	data_transfer(logical, uploaded, staging, iqueue, queue);
-	vkDestroyBuffer(logical, staging.buf, NULL);
-	vkFreeMemory(logical, staging.mem, NULL);
+	data_transfer(ctx->device, uploaded, staging, iqueue, queue);
+	vkDestroyBuffer(ctx->device, staging.buf, NULL);
+	vkFreeMemory(ctx->device, staging.mem, NULL);
 	return uploaded;
 }
 
@@ -765,7 +762,7 @@ u32 mips_for(u32 width, u32 height)
 	return mips;
 }
 
-vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
+vulkan_image vulkan_image_create(context *ctx,
 	VkFormat fmt, u32 width, u32 height, VkImageUsageFlags usage,
 	VkMemoryPropertyFlags prop, VkImageTiling tiling, u32 mips)
 {
@@ -785,23 +782,23 @@ vulkan_image vulkan_image_create(VkDevice logical, VkPhysicalDevice physical,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 	};
 	VkImage vulkan_img;
-	if (vkCreateImage(logical, &img_desc, NULL, &vulkan_img) != VK_SUCCESS)
+	if (vkCreateImage(ctx->device, &img_desc, NULL, &vulkan_img) != VK_SUCCESS)
 		crash("vkCreateImage");
 
 	VkMemoryRequirements reqs;
-	vkGetImageMemoryRequirements(logical, vulkan_img, &reqs);
+	vkGetImageMemoryRequirements(ctx->device, vulkan_img, &reqs);
 	VkMemoryAllocateInfo alloc_desc = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 		.allocationSize = reqs.size,
 		.memoryTypeIndex = constrain_memory_type_or_crash(
-			physical,
+			ctx,
 			reqs.memoryTypeBits,
 			prop),
 	};
 	VkDeviceMemory mem;
-	if (vkAllocateMemory(logical, &alloc_desc, NULL, &mem) != VK_SUCCESS)
+	if (vkAllocateMemory(ctx->device, &alloc_desc, NULL, &mem) != VK_SUCCESS)
 		crash("vkAllocateMemory");
-	vkBindImageMemory(logical, vulkan_img, mem, 0);
+	vkBindImageMemory(ctx->device, vulkan_img, mem, 0);
 	return (vulkan_image){ vulkan_img, mem, mips };
 }
 
@@ -933,17 +930,17 @@ void image_mips_transition(VkCommandBuffer cmd, VkImage img, u32 width, u32 heig
 	);
 }
 
-vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img,
+vulkan_image image_upload(context *ctx, image img,
 	u32 ixfer_queue, VkQueue xfer_queue)
 {
 	VkDeviceSize size = (VkDeviceSize) img.width * (VkDeviceSize) img.height * 4ul;
-	vulkan_buffer staging = buffer_create_or_crash(logical, physical,
+	vulkan_buffer staging = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	buffer_populate(logical, staging, img.mem);
+	buffer_populate(ctx->device, staging, img.mem);
 	stbi_image_free(img.mem);
 	VkFormat fmt = VK_FORMAT_R8G8B8A8_SRGB;
-	vulkan_image vimg = vulkan_image_create(logical, physical,
+	vulkan_image vimg = vulkan_image_create(ctx,
 		fmt, (u32) img.width, (u32) img.height,
 		VK_IMAGE_USAGE_TRANSFER_DST_BIT
 	      | VK_IMAGE_USAGE_SAMPLED_BIT
@@ -951,13 +948,13 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL,
 		mips_for((u32) img.width, (u32) img.height));
 	VkFormatProperties props;
-	vkGetPhysicalDeviceFormatProperties(physical, fmt, &props);
+	vkGetPhysicalDeviceFormatProperties(ctx->physical_device, fmt, &props);
 	if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 		crash("vkCmdBlitImage not available for mipmap generation");
-	VkCommandPool pool = command_pool_create_or_crash(logical,
+	VkCommandPool pool = command_pool_create_or_crash(ctx->device,
 		ixfer_queue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
-	command_buffer_create_or_crash(logical, pool, 1, &cmd);
+	command_buffer_create_or_crash(ctx->device, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -975,10 +972,10 @@ vulkan_image image_upload(VkDevice logical, VkPhysicalDevice physical, image img
 	vkEndCommandBuffer(cmd);
 	vkQueueSubmit(xfer_queue, 1, &submission, VK_NULL_HANDLE);
 	vkQueueWaitIdle(xfer_queue);
-	vkFreeCommandBuffers(logical, pool, 1, &cmd);
-	vkDestroyBuffer(logical, staging.buf, NULL);
-	vkFreeMemory(logical, staging.mem, NULL);
-	vkDestroyCommandPool(logical, pool, NULL);
+	vkFreeCommandBuffers(ctx->device, pool, 1, &cmd);
+	vkDestroyBuffer(ctx->device, staging.buf, NULL);
+	vkFreeMemory(ctx->device, staging.mem, NULL);
+	vkDestroyCommandPool(ctx->device, pool, NULL);
 	return vimg;
 }
 
@@ -1144,21 +1141,21 @@ typedef struct {
 	VkFormat fmt;
 } depth_buffer;
 
-depth_buffer depth_buffer_create(VkDevice logical, VkPhysicalDevice physical, VkExtent2D dims)
+depth_buffer depth_buffer_create(context *ctx, VkExtent2D dims)
 {
 	VkFormat candidates[] = {
 		VK_FORMAT_D32_SFLOAT,
 		VK_FORMAT_D24_UNORM_S8_UINT,
 		VK_FORMAT_D32_SFLOAT_S8_UINT,
 	};
-	VkFormat fmt = format_supported(physical, ARRAY_SIZE(candidates), candidates,
+	VkFormat fmt = format_supported(ctx->physical_device, ARRAY_SIZE(candidates), candidates,
 		VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 	if (fmt == VK_FORMAT_UNDEFINED)
 		crash("no suitable format found for a depth buffer");
-	vulkan_image img = vulkan_image_create(logical, physical, fmt,
+	vulkan_image img = vulkan_image_create(ctx, fmt,
 		dims.width, dims.height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_TILING_OPTIMAL, 1);
-	VkImageView view = image_view_create(logical, img.img, fmt, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+	VkImageView view = image_view_create(ctx->device, img.img, fmt, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 	return (depth_buffer){ img, view, fmt };
 }
 
@@ -1169,29 +1166,29 @@ int main()
 {
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	swapchain swap = swapchain_create(&ctx);
-	depth_buffer db = depth_buffer_create(ctx.device, ctx.physical_device, swap.dim);
+	depth_buffer db = depth_buffer_create(&ctx, swap.dim);
 	VkRenderPass graphics_pass = render_pass_create_or_crash(ctx.device,
 		swap.fmt, db.fmt);
 	VkFramebuffer *framebuf = framebuf_attach_or_crash(ctx.device, swap,
 		graphics_pass, db.view);
-	vulkan_buffer ubuf = buffer_create_or_crash(ctx.device, ctx.physical_device,
+	vulkan_buffer ubuf = buffer_create_or_crash(&ctx,
 		MAX_FRAMES_RENDERING * sizeof(transforms),
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	u32 igqueue = ctx.specs->iq_graphics;
 	VkQueue gqueue;
 	vkGetDeviceQueue(ctx.device, igqueue, 0, &gqueue);
-	vulkan_image tex_image = image_upload(ctx.device, ctx.physical_device,
+	vulkan_image tex_image = image_upload(&ctx,
 		load_image("res/sky_bottom.png"), igqueue, gqueue);
 	VkImageView tex_view = image_view_create(ctx.device, tex_image.img,
 		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, tex_image.mips);
 	VkSampler sampler = sampler_create_or_crash(ctx.device, ctx.physical_device);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, swap.dim, graphics_pass, ubuf, tex_view, sampler);
-	vulkan_buffer vbuf = data_upload(ctx.device, ctx.physical_device,
+	vulkan_buffer vbuf = data_upload(&ctx,
 		sizeof vertices, vertices, igqueue, gqueue,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-	vulkan_buffer ibuf = data_upload(ctx.device, ctx.physical_device,
+	vulkan_buffer ibuf = data_upload(&ctx,
 		sizeof indices, indices, igqueue, gqueue,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	void *umapped;
