@@ -16,46 +16,43 @@ static gpu_specs gpu_specs_init(VkPhysicalDevice dev)
 	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_queue_families, NULL);
 	gpu_specs specs = malloc(sizeof(*specs)
 			+ n_queue_families * sizeof(*specs->queue_families));
-	VkQueueFamilyProperties *queue_families = (void*)
-		((char*) specs + sizeof(*specs));
 	vkGetPhysicalDeviceQueueFamilyProperties(dev,
-		&n_queue_families, queue_families);
-	specs->n_queue_families = n_queue_families;
-	specs->queue_families = queue_families;
+		&n_queue_families, specs->queue_families);
 
 	// search most fitting queues
 	u32 iq_graphics = UINT32_MAX;
-	u32 iq_compute = UINT32_MAX;
+	u32 iq_compute  = UINT32_MAX;
 	u32 iq_transfer = UINT32_MAX;
-	VkQueueFlags best_f_graphics = VK_QUEUE_FLAG_BITS_MAX_ENUM;
-	VkQueueFlags best_f_compute = VK_QUEUE_FLAG_BITS_MAX_ENUM;
+	// for the graphics/present queue we want to have everything
+	// for other queues we want the most specialized queues
+	VkQueueFlags best_f_graphics = 0;
+	VkQueueFlags best_f_compute  = VK_QUEUE_FLAG_BITS_MAX_ENUM;
 	VkQueueFlags best_f_transfer = VK_QUEUE_FLAG_BITS_MAX_ENUM;
 	for (u32 iq = 0; iq < n_queue_families; iq++) {
-		VkQueueFlags f_graphics = queue_families[iq].queueFlags
-			& best_f_graphics;
-		VkQueueFlags f_compute = queue_families[iq].queueFlags
-			& best_f_compute;
-		VkQueueFlags f_transfer = queue_families[iq].queueFlags
-			& best_f_transfer;
-		if (queue_families[iq].queueFlags & VK_QUEUE_GRAPHICS_BIT
-			&& less_bits(f_graphics, best_f_graphics)) {
+		VkQueueFlags flags = specs->queue_families[iq].queueFlags;
+		VkQueueFlags f_graphics = flags;
+		VkQueueFlags f_compute  = flags & best_f_compute;
+		VkQueueFlags f_transfer = flags & best_f_transfer;
+		if (flags & VK_QUEUE_GRAPHICS_BIT
+			&& less_bits(best_f_graphics, f_graphics)) {
 			best_f_graphics = f_graphics;
 			iq_graphics = iq;
 		}
-		if (queue_families[iq].queueFlags & VK_QUEUE_COMPUTE_BIT
+		if (flags & VK_QUEUE_COMPUTE_BIT
 			&& less_bits(f_compute, best_f_compute)) {
 			best_f_compute = f_compute;
 			iq_compute = iq;
 		}
-		if (queue_families[iq].queueFlags & VK_QUEUE_TRANSFER_BIT
+		if (flags & VK_QUEUE_TRANSFER_BIT
 			&& less_bits(f_transfer, best_f_transfer)) {
 			best_f_transfer = f_transfer;
 			iq_transfer = iq;
 		}
 	}
 	specs->iq_graphics = iq_graphics;
-	specs->iq_compute = iq_compute;
+	specs->iq_compute  = iq_compute;
 	specs->iq_transfer = iq_transfer;
+	specs->n_queue_families = n_queue_families;
 
 	vkGetPhysicalDeviceProperties(dev, &specs->properties);
 	vkGetPhysicalDeviceFeatures(dev, &specs->features);
@@ -220,6 +217,12 @@ static VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst,
 		}
 	}
 	free(gpu);
+	if (selected_specs->iq_graphics == UINT32_MAX)
+		crash("no suitable graphics queue");
+	if (selected_specs->iq_compute == UINT32_MAX)
+		crash("no suitable compute queue");
+	if (selected_specs->iq_transfer == UINT32_MAX)
+		crash("no suitable transfer queue");
 	if (selected == VK_NULL_HANDLE)
 		crash("suitable processor not found.");
 	*out_specs = selected_specs;

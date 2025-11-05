@@ -10,11 +10,11 @@ typedef struct {
 	VkPhysicalDeviceProperties properties;
 	VkPhysicalDeviceFeatures features;
 	VkPhysicalDeviceMemoryProperties memory;
-	VkQueueFamilyProperties *queue_families;
-	u32 n_queue_families;
 	u32 iq_graphics;
 	u32 iq_compute;
 	u32 iq_transfer;
+	u32 n_queue_families;
+	VkQueueFamilyProperties queue_families[];
 } *gpu_specs;
 
 typedef struct {
