@@ -14,139 +14,11 @@
 #include <cglm/cglm.h>
 #include <stb/stb_image.h>
 #include "shared.h"
-
-
-#define ARRAY_SIZE(a) (sizeof (a) / sizeof *(a))
-#define MAX(a, b) ((a)<(b)? (a): (b))
+#include "util.h"
+#include "types.h"
+#include "gpu.h"
 
 #define MAX_FRAMES_RENDERING (2)
-
-typedef uint32_t u32;
-typedef int32_t i32;
-typedef uint16_t u16;
-typedef float f32;
-
-noreturn void crash(const char *reason, ...)
-{
-	va_list args;
-	va_start(args, reason);
-	vfprintf(stderr, reason, args);
-	fputc('\n', stderr);
-	va_end(args);
-	exit(1);
-
-}
-
-void *xmalloc(size_t sz)
-{
-	void *ptr = malloc(sz);
-	if (!ptr) crash("malloc");
-	return ptr;
-}
-
-void init_glfw_or_crash()
-{
-	if (glfwInit() != GLFW_TRUE) crash("glfwInit");
-}
-
-GLFWwindow *init_window_or_crash(int width, int height, const char *title)
-{
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	GLFWwindow *win = glfwCreateWindow(width, height, title, NULL, NULL);
-	if (!win) crash("glfwCreateWindow");
-	return win;
-}
-
-static const char *const validation = "VK_LAYER_KHRONOS_validation";
-
-void vulkan_validation_layers_or_crash()
-{
-	u32 n_lyr;
-	vkEnumerateInstanceLayerProperties(&n_lyr, NULL);
-	VkLayerProperties *lyr = xmalloc(n_lyr * sizeof *lyr);
-	vkEnumerateInstanceLayerProperties(&n_lyr, lyr);
-	for (VkLayerProperties *cur = lyr; cur != lyr + n_lyr; cur++) {
-		if (strcmp(validation, cur->layerName) == 0) {
-			return;
-		}
-	}
-	free(lyr);
-	crash("validation layer '%s' not found");
-}
-
-VkInstance vulkan_instance_or_crash()
-{
-	VkApplicationInfo app_desc = {
-		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-		.pApplicationName = "Gala",
-		.applicationVersion = VK_MAKE_VERSION(0, 0, 0),
-		.pEngineName = "No engine",
-		.engineVersion = VK_MAKE_VERSION(0, 0, 0),
-		.apiVersion = VK_API_VERSION_1_0,
-	};
-	VkInstanceCreateInfo inst_desc = {
-		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-		.pApplicationInfo = &app_desc,
-	};
-#ifndef NDEBUG
-	vulkan_validation_layers_or_crash();
-	inst_desc.enabledLayerCount = 1;
-	inst_desc.ppEnabledLayerNames = &validation;
-#endif
-	inst_desc.ppEnabledExtensionNames = glfwGetRequiredInstanceExtensions(&inst_desc.enabledExtensionCount);
-	VkInstance inst;
-	VkResult status = vkCreateInstance(&inst_desc, NULL, &inst);
-	if (status != VK_SUCCESS) crash("vkCreateInstance");
-	return inst;
-}
-
-typedef struct {
-	union {
-		struct {
-			u32 graphics;
-			u32 present;
-		};
-		u32 array_repr[0];
-	};
-
-	u32 missing;
-} queue_families;
-
-queue_families required_queue_families(VkPhysicalDevice dev, VkSurfaceKHR surface)
-{
-	queue_families req;
-	req.missing = 1u | 2u;
-	u32 n_qf;
-	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_qf, NULL);
-	VkQueueFamilyProperties *qf = xmalloc(n_qf * sizeof *qf);
-	vkGetPhysicalDeviceQueueFamilyProperties(dev, &n_qf, qf);
-	for (u32 i = 0; i < n_qf; i++) {
-		VkBool32 presentable;
-		vkGetPhysicalDeviceSurfaceSupportKHR(dev, i, surface, &presentable);
-		if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT && presentable) {
-			req.graphics = i;
-			req.present = i;
-			req.missing &= ~3u;
-		}
-	}
-	free(qf);
-	return req;
-}
-
-static inline u32 min_u32(u32 a, u32 b)
-{
-	return (a < b)? a: b;
-}
-
-static inline u32 max_u32(u32 a, u32 b)
-{
-	return (a < b)? b: a;
-}
-
-static inline u32 clamp_u32(u32 x, u32 lo, u32 hi)
-{
-	return max_u32(lo, min_u32(x, hi));
-}
 
 VkExtent2D swapchain_select_resolution(VkPhysicalDevice dev, VkSurfaceKHR surface, GLFWwindow *win, VkSurfaceCapabilitiesKHR *pcap)
 {
@@ -157,8 +29,8 @@ VkExtent2D swapchain_select_resolution(VkPhysicalDevice dev, VkSurfaceKHR surfac
 		int width, height;
 		glfwGetFramebufferSize(win, &width, &height);
 		return (VkExtent2D){
-			clamp_u32((u32) width, cap.minImageExtent.width, cap.maxImageExtent.height),
-			clamp_u32((u32) height, cap.minImageExtent.height, cap.maxImageExtent.height),
+			CLAMP((u32) width, cap.minImageExtent.width, cap.maxImageExtent.height),
+			CLAMP((u32) height, cap.minImageExtent.height, cap.maxImageExtent.height),
 		};
 	} else {
 		return cap.currentExtent;
@@ -296,17 +168,21 @@ typedef struct {
 	VkExtent2D dim;
 } swapchain;
 
-swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *win, queue_families *fam, VkPhysicalDevice dev)
+swapchain swapchain_create(context *ctx)
 {
+	VkSurfaceKHR surface = ctx->window_surface;
 	VkSurfaceCapabilitiesKHR cap;
-	VkExtent2D dim = swapchain_select_resolution(dev, surface, win, &cap);
-	VkPresentModeKHR mode = swapchain_select_latency(dev, surface);
-	VkSurfaceFormatKHR fmt = swapchain_select_pixels(dev, surface);
+	VkExtent2D dim = swapchain_select_resolution(ctx->physical_device,
+		surface, ctx->window, &cap);
+	VkPresentModeKHR mode = swapchain_select_latency(ctx->physical_device, surface);
+	VkSurfaceFormatKHR fmt = swapchain_select_pixels(ctx->physical_device, surface);
 	u32 expected_swap_cnt = cap.minImageCount + 1u;
 	VkSwapchainCreateInfoKHR swap_desc = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
-		.minImageCount = (cap.maxImageCount != 0)? min_u32(cap.maxImageCount, expected_swap_cnt): expected_swap_cnt,
+		.minImageCount = (cap.maxImageCount != 0)?
+			MIN(cap.maxImageCount, expected_swap_cnt):
+			expected_swap_cnt,
 		.imageFormat = fmt.format,
 		.imageColorSpace = fmt.colorSpace,
 		.imageExtent = dim,
@@ -317,25 +193,20 @@ swapchain swapchain_create(VkDevice logical, VkSurfaceKHR surface, GLFWwindow *w
 		.presentMode = mode,
 		.clipped = VK_TRUE,
 		.oldSwapchain = VK_NULL_HANDLE,
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
-	if (fam->graphics == fam->present) {
-		swap_desc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	} else {
-		swap_desc.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-		swap_desc.queueFamilyIndexCount = 2;
-		swap_desc.pQueueFamilyIndices = fam->array_repr;
-	}
 	swapchain swap;
-	if (vkCreateSwapchainKHR(logical, &swap_desc, NULL, &swap.chain) != VK_SUCCESS)
+	if (vkCreateSwapchainKHR(ctx->device,
+		&swap_desc, NULL, &swap.chain) != VK_SUCCESS)
 		crash("vkCreateSwapchainKHR");
-	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, NULL);
+	vkGetSwapchainImagesKHR(ctx->device, swap.chain, &swap.n_slot, NULL);
 	swap.slot = xmalloc(swap.n_slot * sizeof *swap.slot);
-	vkGetSwapchainImagesKHR(logical, swap.chain, &swap.n_slot, swap.slot);
+	vkGetSwapchainImagesKHR(ctx->device, swap.chain, &swap.n_slot, swap.slot);
 	swap.fmt = fmt.format;
 	swap.dim = dim;
 	swap.view = xmalloc(swap.n_slot * sizeof *swap.view);
 	for (u32 i = 0; i < swap.n_slot; i++) {
-		swap.view[i] = image_view_create(logical, swap.slot[i],
+		swap.view[i] = image_view_create(ctx->device, swap.slot[i],
 			fmt.format, VK_IMAGE_ASPECT_COLOR_BIT, 1u);
 	}
 	return swap;
@@ -392,123 +263,6 @@ VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, swapchain swap, VkRend
 			crash("vkCreateFramebuffer");
 	}
 	return framebuf;
-}
-
-static const char *const swapchain_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-
-u32 processor_score(VkPhysicalDevice dev, VkSurfaceKHR surface, queue_families *f)
-{
-	*f = required_queue_families(dev, surface);
-	if (f->missing) {
-		return 0;
-	}
-	u32 n_ext;
-	vkEnumerateDeviceExtensionProperties(dev, NULL, &n_ext, NULL);
-	VkExtensionProperties *ext = xmalloc(n_ext * sizeof *ext);
-	vkEnumerateDeviceExtensionProperties(dev, NULL, &n_ext, ext);
-	bool found = false;
-	for (u32 i = 0; i < n_ext; i++) {
-		if (strcmp(ext[i].extensionName, swapchain_extension) == 0) {
-			found = true;
-			break;
-		}
-	}
-	free(ext);
-	if (!found) {
-		return 0;
-	}
-	VkPhysicalDeviceProperties prop;
-	vkGetPhysicalDeviceProperties(dev, &prop);
-	VkPhysicalDeviceFeatures feat;
-	vkGetPhysicalDeviceFeatures(dev, &feat);
-	if (!feat.samplerAnisotropy) {
-		return 0;
-	}
-	u32 score = 1;
-	if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-		score += 0x100;
-	} else if (prop.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
-		score += 0x10;
-	}
-	printf("GPU '%*s' assigned score of 0x%" PRIx32 ".\n",
-		(int) VK_MAX_PHYSICAL_DEVICE_NAME_SIZE, prop.deviceName, score);
-	return score;
-}
-
-VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst, VkSurfaceKHR surface, queue_families *queues)
-{
-	VkPhysicalDevice selected = VK_NULL_HANDLE;
-	u32 n_gpu;
-	vkEnumeratePhysicalDevices(inst, &n_gpu, NULL);
-	VkPhysicalDevice *gpu = xmalloc(n_gpu * sizeof *gpu);
-	vkEnumeratePhysicalDevices(inst, &n_gpu, gpu);
-	u32 best_score = 0;
-	for (u32 i = 0; i < n_gpu; i++) {
-		queue_families cur_queues;
-		u32 score = processor_score(gpu[i], surface, &cur_queues);
-		if (score > best_score) {
-			best_score = score;
-			selected = gpu[i];
-			*queues = cur_queues;
-		}
-	}
-	free(gpu);
-	if (selected == VK_NULL_HANDLE)
-		crash("suitable processor not found.");
-	return selected;
-}
-
-typedef struct {
-	VkDevice logical;
-	VkQueue graphics;
-	VkQueue present;
-} logical_interface;
-
-logical_interface vulkan_logical_device_or_crash(VkPhysicalDevice physical, queue_families *queues)
-{
-	float prio = 1.0f;
-	VkDeviceQueueCreateInfo queue_desc[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueFamilyIndex = queues->graphics,
-			.queueCount = 1,
-			.pQueuePriorities = &prio,
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueFamilyIndex = queues->present,
-			.queueCount = 1,
-			.pQueuePriorities = &prio,
-		},
-	};
-	VkPhysicalDeviceFeatures feat = {
-		.samplerAnisotropy = VK_TRUE,
-	};
-	bool sep_queues = (queues->present == queues->graphics);
-	VkDeviceCreateInfo logdev_desc = {
-		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pQueueCreateInfos = queue_desc,
-		.queueCreateInfoCount = sep_queues? 1: 2,
-		.pEnabledFeatures = &feat,
-		.enabledExtensionCount = 1,
-		.ppEnabledExtensionNames = &swapchain_extension,
-		.enabledLayerCount = 1,
-		.ppEnabledLayerNames = &validation,
-	};
-	logical_interface i;
-	if (vkCreateDevice(physical, &logdev_desc, NULL, &i.logical) != VK_SUCCESS)
-		crash("vkCreateDevice");
-	vkGetDeviceQueue(i.logical, queues->graphics, 0, &i.graphics);
-	vkGetDeviceQueue(i.logical, queues->present, !sep_queues, &i.present);
-	return i;
-}
-
-VkSurfaceKHR window_surface(VkInstance inst, GLFWwindow *win)
-{
-	VkSurfaceKHR surface;
-	if (glfwCreateWindowSurface(inst, win, NULL, &surface) != VK_SUCCESS)
-		crash("couldn't create a surface to present to");
-	return surface;
 }
 
 typedef struct {
@@ -1319,14 +1073,15 @@ typedef struct {
 	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
 } draw_calls;
 
-void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index,
+void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	swapchain swap, VkFramebuffer *framebuf, VkRenderPass graphics_pass,
-	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, transforms *umapped)
+	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, transforms *umapped,
+	VkQueue gqueue)
 {
 	// cpu wait for current frame to be done rendering
-	vkWaitForFences(interf.logical, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
-	vkResetFences(interf.logical, 1, &info.sync.rendering[upcoming_index]);
-	vkAcquireNextImageKHR(interf.logical, swap.chain, UINT64_MAX,
+	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
+	vkResetFences(ctx->device, 1, &info.sync.rendering[upcoming_index]);
+	vkAcquireNextImageKHR(ctx->device, swap.chain, UINT64_MAX,
 		info.sync.present_ready[upcoming_index], VK_NULL_HANDLE, &swap.current);
 	// recording commands for next frame
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
@@ -1346,7 +1101,7 @@ void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &info.sync.render_done[upcoming_index],
 	};
-	if (vkQueueSubmit(interf.graphics, 1, &submission_desc, info.sync.rendering[upcoming_index]) != VK_SUCCESS)
+	if (vkQueueSubmit(gqueue, 1, &submission_desc, info.sync.rendering[upcoming_index]) != VK_SUCCESS)
 		crash("vkQueueSubmit");
 	// present rendered image
 	VkPresentInfoKHR present_desc = {
@@ -1357,7 +1112,7 @@ void draw_or_crash(logical_interface interf, draw_calls info, u32 upcoming_index
 		.pSwapchains = &swap.chain,
 		.pImageIndices = &swap.current,
 	};
-	vkQueuePresentKHR(interf.present, &present_desc);
+	vkQueuePresentKHR(gqueue, &present_desc);
 }
 
 VkSampler sampler_create_or_crash(VkDevice logical, VkPhysicalDevice physical)
@@ -1416,95 +1171,89 @@ static const int HEIGHT = 600;
 
 int main()
 {
-	init_glfw_or_crash();
-	GLFWwindow *win = init_window_or_crash(WIDTH, HEIGHT, "Gala");
-	VkInstance inst = vulkan_instance_or_crash();
-	VkSurfaceKHR surface = window_surface(inst, win);
-	queue_families queues;
-	VkPhysicalDevice physical = vulkan_select_gpu_or_crash(inst, surface, &queues);
-	logical_interface interf = vulkan_logical_device_or_crash(physical, &queues);
-	swapchain swap = swapchain_create(interf.logical, surface, win, &queues, physical);
-	depth_buffer db = depth_buffer_create(interf.logical, physical, swap.dim);
-	VkRenderPass graphics_pass = render_pass_create_or_crash(interf.logical,
+	context ctx = context_init(WIDTH, HEIGHT, "Gala");
+	swapchain swap = swapchain_create(&ctx);
+	depth_buffer db = depth_buffer_create(ctx.device, ctx.physical_device, swap.dim);
+	VkRenderPass graphics_pass = render_pass_create_or_crash(ctx.device,
 		swap.fmt, db.fmt);
-	VkFramebuffer *framebuf = framebuf_attach_or_crash(interf.logical, swap,
+	VkFramebuffer *framebuf = framebuf_attach_or_crash(ctx.device, swap,
 		graphics_pass, db.view);
-	vulkan_buffer ubuf = buffer_create_or_crash(interf.logical, physical,
+	vulkan_buffer ubuf = buffer_create_or_crash(ctx.device, ctx.physical_device,
 		MAX_FRAMES_RENDERING * sizeof(transforms),
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	vulkan_image tex_image = image_upload(interf.logical, physical,
-		load_image("res/sky_bottom.png"), queues.graphics, interf.graphics);
-	VkImageView tex_view = image_view_create(interf.logical, tex_image.img,
+	u32 igqueue = ctx.specs->iq_graphics;
+	VkQueue gqueue;
+	vkGetDeviceQueue(ctx.device, igqueue, 0, &gqueue);
+	vulkan_image tex_image = image_upload(ctx.device, ctx.physical_device,
+		load_image("res/sky_bottom.png"), igqueue, gqueue);
+	VkImageView tex_view = image_view_create(ctx.device, tex_image.img,
 		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, tex_image.mips);
-	VkSampler sampler = sampler_create_or_crash(interf.logical, physical);
+	VkSampler sampler = sampler_create_or_crash(ctx.device, ctx.physical_device);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
-		interf.logical, swap.dim, graphics_pass, ubuf, tex_view, sampler);
-	vulkan_buffer vbuf = data_upload(interf.logical, physical,
-		sizeof vertices, vertices, queues.graphics, interf.graphics,
+		ctx.device, swap.dim, graphics_pass, ubuf, tex_view, sampler);
+	vulkan_buffer vbuf = data_upload(ctx.device, ctx.physical_device,
+		sizeof vertices, vertices, igqueue, gqueue,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-	vulkan_buffer ibuf = data_upload(interf.logical, physical,
-		sizeof indices, indices, queues.graphics, interf.graphics,
+	vulkan_buffer ibuf = data_upload(ctx.device, ctx.physical_device,
+		sizeof indices, indices, igqueue, gqueue,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	void *umapped;
-	vkMapMemory(interf.logical, ubuf.mem, 0, ubuf.size, 0, &umapped);
-	VkCommandPool pool = command_pool_create_or_crash(interf.logical,
-		queues.graphics, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+	vkMapMemory(ctx.device, ubuf.mem, 0, ubuf.size, 0, &umapped);
+	VkCommandPool pool = command_pool_create_or_crash(ctx.device,
+		igqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
-        command_buffer_create_or_crash(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
-	sync_create_or_crash(interf.logical, MAX_FRAMES_RENDERING,
+        command_buffer_create_or_crash(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
+	sync_create_or_crash(ctx.device, MAX_FRAMES_RENDERING,
 		draws.sync.present_ready, draws.sync.render_done, draws.sync.rendering);
 
 	u32 cpu_frame = 0;
-	while (!glfwWindowShouldClose(win)) {
+	while (!glfwWindowShouldClose(ctx.window)) {
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
-		draw_or_crash(interf, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			swap, framebuf, graphics_pass, pipe, vbuf, ibuf, umapped);
+		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
+			swap, framebuf, graphics_pass, pipe, vbuf, ibuf, umapped,
+			gqueue);
 		cpu_frame++;
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 	}
 	printf("\n");
 
-	vkDeviceWaitIdle(interf.logical);
+	vkDeviceWaitIdle(ctx.device);
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
-		vkDestroySemaphore(interf.logical, draws.sync.present_ready[i], NULL);
-		vkDestroySemaphore(interf.logical, draws.sync.render_done[i], NULL);
-		vkDestroyFence(interf.logical, draws.sync.rendering[i], NULL);
+		vkDestroySemaphore(ctx.device, draws.sync.present_ready[i], NULL);
+		vkDestroySemaphore(ctx.device, draws.sync.render_done[i], NULL);
+		vkDestroyFence(ctx.device, draws.sync.rendering[i], NULL);
 	}
-	vkFreeCommandBuffers(interf.logical, pool, MAX_FRAMES_RENDERING, draws.commands);
-	vkDestroyCommandPool(interf.logical, pool, NULL);
-	vkDestroyBuffer(interf.logical, ubuf.buf, NULL);
-	vkFreeMemory(interf.logical, ubuf.mem, NULL);
-	vkFreeMemory(interf.logical, ibuf.mem, NULL);
-	vkDestroyBuffer(interf.logical, ibuf.buf, NULL);
-	vkFreeMemory(interf.logical, vbuf.mem, NULL);
-	vkDestroyBuffer(interf.logical, vbuf.buf, NULL);
-	vkDestroyPipeline(interf.logical, pipe.line, NULL);
-	vkDestroyPipelineLayout(interf.logical, pipe.layout, NULL);
-	vkDestroySampler(interf.logical, sampler, NULL);
-	vkDestroyImageView(interf.logical, tex_view, NULL);
-	vkDestroyImage(interf.logical, tex_image.img, NULL);
-	vkFreeMemory(interf.logical, tex_image.mem, NULL);
-	vkDestroyDescriptorPool(interf.logical, pipe.dpool, NULL);
-	vkDestroyDescriptorSetLayout(interf.logical, pipe.set_layout, NULL);
+	vkFreeCommandBuffers(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
+	vkDestroyCommandPool(ctx.device, pool, NULL);
+	vkDestroyBuffer(ctx.device, ubuf.buf, NULL);
+	vkFreeMemory(ctx.device, ubuf.mem, NULL);
+	vkFreeMemory(ctx.device, ibuf.mem, NULL);
+	vkDestroyBuffer(ctx.device, ibuf.buf, NULL);
+	vkFreeMemory(ctx.device, vbuf.mem, NULL);
+	vkDestroyBuffer(ctx.device, vbuf.buf, NULL);
+	vkDestroyPipeline(ctx.device, pipe.line, NULL);
+	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
+	vkDestroySampler(ctx.device, sampler, NULL);
+	vkDestroyImageView(ctx.device, tex_view, NULL);
+	vkDestroyImage(ctx.device, tex_image.img, NULL);
+	vkFreeMemory(ctx.device, tex_image.mem, NULL);
+	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
+	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
 	for (u32 i = 0; i < swap.n_slot; i++) {
-		vkDestroyImageView(interf.logical, swap.view[i], NULL);
-		vkDestroyFramebuffer(interf.logical, framebuf[i], NULL);
+		vkDestroyImageView(ctx.device, swap.view[i], NULL);
+		vkDestroyFramebuffer(ctx.device, framebuf[i], NULL);
 	}
-	vkDestroyRenderPass(interf.logical, graphics_pass, NULL);
-	vkDestroyImageView(interf.logical, db.view, NULL);
-	vkDestroyImage(interf.logical, db.img.img, NULL);
-	vkFreeMemory(interf.logical, db.img.mem, NULL);
+	vkDestroyRenderPass(ctx.device, graphics_pass, NULL);
+	vkDestroyImageView(ctx.device, db.view, NULL);
+	vkDestroyImage(ctx.device, db.img.img, NULL);
+	vkFreeMemory(ctx.device, db.img.mem, NULL);
 	free(swap.view);
 	free(swap.slot);
-	vkDestroySwapchainKHR(interf.logical, swap.chain, NULL);
-	vkDestroyDevice(interf.logical, NULL);
-	vkDestroySurfaceKHR(inst, surface, NULL);
-	vkDestroyInstance(inst, NULL);
-	glfwDestroyWindow(win);
-	glfwTerminate();
+	vkDestroySwapchainKHR(ctx.device, swap.chain, NULL);
+	context_fini(&ctx);
 	return 0;
 }
 
