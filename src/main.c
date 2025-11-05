@@ -278,25 +278,12 @@ VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
 	return sh;
 }
 
-VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical)
+VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical,
+	u32 n_bind_desc, VkDescriptorSetLayoutBinding *bind_desc)
 {
-	VkDescriptorSetLayoutBinding bind_desc[] = {
-		{
-			.binding = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-		},
-		{
-			.binding = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-		}
-	};
 	VkDescriptorSetLayoutCreateInfo lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = ARRAY_SIZE(bind_desc),
+		.bindingCount = n_bind_desc,
 		.pBindings = bind_desc,
 	};
 	VkDescriptorSetLayout lyt;
@@ -305,22 +292,13 @@ VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical)
 	return lyt;
 }
 
-// TODO: this could take a VkDescriptorSetLayoutBinding array instead of being hard coded
-VkDescriptorPool descr_pool_create_or_crash(VkDevice logical)
+VkDescriptorPool descr_pool_create_or_crash(VkDevice logical,
+	u32 n_pool_sizes, VkDescriptorPoolSize *pool_sizes)
 {
 	VkDescriptorPoolCreateInfo pool_desc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		.poolSizeCount = 2,
-		.pPoolSizes = (VkDescriptorPoolSize[]){
-			{
-				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = (u32) MAX_FRAMES_RENDERING,
-			},
-			{
-				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = (u32) MAX_FRAMES_RENDERING,
-			},
-		},
+		.poolSizeCount = n_pool_sizes,
+		.pPoolSizes = pool_sizes,
 		.maxSets = (u32) MAX_FRAMES_RENDERING,
 	};
 	VkDescriptorPool pool;
@@ -340,7 +318,7 @@ VkDescriptorSet *descr_set_create_or_crash(VkDevice logical,
 	VkDescriptorSetAllocateInfo alloc_desc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		.descriptorPool = pool,
-		.descriptorSetCount = (u32) MAX_FRAMES_RENDERING,
+		.descriptorSetCount = ARRAY_SIZE(lyt_dupes),
 		.pSetLayouts = lyt_dupes,
 	};
 	if (vkAllocateDescriptorSets(logical, &alloc_desc, set) != VK_SUCCESS)
@@ -581,8 +559,34 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.attachmentCount = 1,
 		.pAttachments = &blend_attach,
 	};
-	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create_or_crash(logical);
-	VkDescriptorPool dpool = descr_pool_create_or_crash(logical);
+	VkDescriptorSetLayoutBinding bind_desc[] = {
+		{
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		},
+		{
+			.binding = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+		}
+	};
+	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create_or_crash(logical,
+		ARRAY_SIZE(bind_desc), bind_desc);
+	VkDescriptorPoolSize pool_sizes[] = {
+		{
+			.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
+		},
+		{
+			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
+		},
+	};
+	VkDescriptorPool dpool = descr_pool_create_or_crash(logical,
+		ARRAY_SIZE(pool_sizes), pool_sizes);
 	VkDescriptorSet *set = descr_set_create_or_crash(logical,
 		dpool, set_lyt);
 	descr_set_config(logical, set, ubuf, tex_view, tex_sm);
