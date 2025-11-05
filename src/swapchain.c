@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include "swapchain.h"
 #include "util.h"
+#include "image.h"
 
 static VkExtent2D swapchain_select_resolution(context *ctx,
 	VkSurfaceCapabilitiesKHR *pcap)
@@ -52,16 +53,14 @@ vulkan_swapchain vulkan_swapchain_create(context *ctx)
 		&swap_desc, NULL, &swap.handle) != VK_SUCCESS)
 		crash("vkCreateSwapchainKHR");
 	vkGetSwapchainImagesKHR(ctx->device, swap.handle, &swap.n_slot, NULL);
-	swap.slot = xmalloc(swap.n_slot * sizeof *swap.slot);
+	swap.slot = xmalloc(swap.n_slot * (sizeof(*swap.slot) + sizeof(*swap.view)));
 	vkGetSwapchainImagesKHR(ctx->device, swap.handle, &swap.n_slot, swap.slot);
 	swap.fmt = fmt.format;
 	swap.dim = dim;
-	swap.view = xmalloc(swap.n_slot * sizeof *swap.view);
+	swap.view = (void*) ((char*) swap.slot + swap.n_slot * sizeof(*swap.slot));
 	for (u32 i = 0; i < swap.n_slot; i++) {
-		extern VkImageView image_view_create(VkDevice, VkImage,
-			VkFormat, VkImageAspectFlags, u32);
-		swap.view[i] = image_view_create(ctx->device, swap.slot[i],
-			fmt.format, VK_IMAGE_ASPECT_COLOR_BIT, 1u);
+		swap.view[i] = vulkan_image_view_create_external(ctx, swap.slot[i],
+			fmt.format, 1u, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 	return swap;
 }
@@ -69,10 +68,9 @@ vulkan_swapchain vulkan_swapchain_create(context *ctx)
 void vulkan_swapchain_destroy(context *ctx, vulkan_swapchain *sc)
 {
 	for (u32 i = 0; i < sc->n_slot; i++) {
-		vkDestroyImageView(ctx->device, sc->view[i], NULL);
+		vulkan_image_view_destroy(ctx, sc->view[i]);
 	}
 	free(sc->slot);
-	free(sc->view);
 	vkDestroySwapchainKHR(ctx->device, sc->handle, NULL);
 }
 
