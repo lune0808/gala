@@ -351,7 +351,6 @@ VkDescriptorSet *descr_set_create_or_crash(VkDevice logical,
 u32 constrain_memory_type_or_crash(context *ctx, u32 allowed, VkMemoryPropertyFlags cons)
 {
 	VkPhysicalDeviceMemoryProperties *props = &ctx->specs->memory;
-
 	for (u32 i = 0; i < props->memoryTypeCount; i++) {
 		if (allowed & (1u << i)) {
 			if ((props->memoryTypes[i].propertyFlags & cons) == cons) {
@@ -401,39 +400,40 @@ vulkan_buffer buffer_create_or_crash(context *ctx,
 void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf,
 	VkImageView tex_view, VkSampler tex_sm)
 {
+	VkDescriptorBufferInfo buf_desc = {
+		.buffer = buf.buf,
+		.offset = 0,
+		.range = sizeof(transforms),
+	};
+	VkDescriptorImageInfo tex_desc = {
+		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		.imageView = tex_view,
+		.sampler = tex_sm,
+	};
+	VkWriteDescriptorSet write_desc[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &buf_desc,
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 1,
+			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = 1,
+			.pImageInfo = &tex_desc,
+		},
+	};
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
-		VkDescriptorBufferInfo buf_desc = {
-			.buffer = buf.buf,
-			.offset = i * sizeof(transforms),
-			.range = sizeof(transforms),
-		};
-		VkDescriptorImageInfo tex_desc = {
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			.imageView = tex_view,
-			.sampler = tex_sm,
-		};
-		VkWriteDescriptorSet write_desc[] = {
-			{
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = set[i],
-				.dstBinding = 0,
-				.dstArrayElement = 0,
-				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = 1,
-				.pBufferInfo = &buf_desc,
-			},
-			{
-				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-				.dstSet = set[i],
-				.dstBinding = 1,
-				.dstArrayElement = 0,
-				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = 1,
-				.pImageInfo = &tex_desc,
-			},
-		};
-		vkUpdateDescriptorSets(logical, ARRAY_SIZE(write_desc), write_desc,
-			0, NULL);
+		write_desc[0].dstSet = set[i];
+		write_desc[1].dstSet = set[i];
+		vkUpdateDescriptorSets(logical,
+			ARRAY_SIZE(write_desc), write_desc, 0, NULL);
+		buf_desc.offset += sizeof(transforms);
 	}
 }
 
@@ -620,13 +620,27 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 	return (pipeline){ gpipe, unif_lyt, set_lyt, dpool, set };
 }
 
+typedef struct {
+	VkQueue handle;
+	u32 family_index;
+	u32 queue_index;
+} vulkan_queue;
+
+vulkan_queue vulkan_queue_ref(context *ctx, u32 family_index)
+{
+	VkQueue handle;
+	u32 queue_index = 0;
+	vkGetDeviceQueue(ctx->device, family_index, queue_index, &handle);
+	return (vulkan_queue){ handle, family_index, queue_index };
+}
+
 VkCommandPool command_pool_create_or_crash(VkDevice logical,
-	u32 queue, VkCommandPoolCreateFlags flags)
+	vulkan_queue queue, VkCommandPoolCreateFlags flags)
 {
 	VkCommandPoolCreateInfo pool_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		.flags = flags,
-		.queueFamilyIndex = queue,
+		.queueFamilyIndex = queue.family_index,
 	};
 	VkCommandPool pool;
 	if (vkCreateCommandPool(logical, &pool_desc, NULL, &pool) != VK_SUCCESS)
@@ -656,10 +670,10 @@ void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool,
 }
 
 void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
-	u32 iqueue, VkQueue queue)
+	vulkan_queue xfer)
 {
 	VkCommandPool pool = command_pool_create_or_crash(logical,
-		iqueue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
 	command_buffer_create_or_crash(logical, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
@@ -679,14 +693,14 @@ void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 		.commandBufferCount = 1,
 		.pCommandBuffers = &cmd,
 	};
-	vkQueueSubmit(queue, 1, &submission, VK_NULL_HANDLE);
-	vkQueueWaitIdle(queue);
+	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
+	vkQueueWaitIdle(xfer.handle);
 	vkFreeCommandBuffers(logical, pool, 1, &cmd);
 	vkDestroyCommandPool(logical, pool, NULL);
 }
 
-vulkan_buffer data_upload(context *ctx,
-	VkDeviceSize size, const void *data, u32 iqueue, VkQueue queue, VkBufferUsageFlags usage)
+vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
+	vulkan_queue xfer, VkBufferUsageFlags usage)
 {
 	vulkan_buffer staging = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -695,7 +709,7 @@ vulkan_buffer data_upload(context *ctx,
 	vulkan_buffer uploaded = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|usage,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	data_transfer(ctx->device, uploaded, staging, iqueue, queue);
+	data_transfer(ctx->device, uploaded, staging, xfer);
 	vkDestroyBuffer(ctx->device, staging.buf, NULL);
 	vkFreeMemory(ctx->device, staging.mem, NULL);
 	return uploaded;
@@ -896,8 +910,7 @@ void image_mips_transition(VkCommandBuffer cmd, VkImage img, u32 width, u32 heig
 	);
 }
 
-vulkan_image image_upload(context *ctx, image img,
-	u32 ixfer_queue, VkQueue xfer_queue)
+vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 {
 	VkDeviceSize size = (VkDeviceSize) img.width * (VkDeviceSize) img.height * 4ul;
 	vulkan_buffer staging = buffer_create_or_crash(ctx,
@@ -918,7 +931,7 @@ vulkan_image image_upload(context *ctx, image img,
 	if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 		crash("vkCmdBlitImage not available for mipmap generation");
 	VkCommandPool pool = command_pool_create_or_crash(ctx->device,
-		ixfer_queue, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
 	command_buffer_create_or_crash(ctx->device, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
@@ -936,8 +949,8 @@ vulkan_image image_upload(context *ctx, image img,
 		.pCommandBuffers = &cmd,
 	};
 	vkEndCommandBuffer(cmd);
-	vkQueueSubmit(xfer_queue, 1, &submission, VK_NULL_HANDLE);
-	vkQueueWaitIdle(xfer_queue);
+	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
+	vkQueueWaitIdle(xfer.handle);
 	vkFreeCommandBuffers(ctx->device, pool, 1, &cmd);
 	vkDestroyBuffer(ctx->device, staging.buf, NULL);
 	vkFreeMemory(ctx->device, staging.mem, NULL);
@@ -1035,7 +1048,7 @@ typedef struct {
 void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	swapchain swap, VkFramebuffer *framebuf, VkRenderPass graphics_pass,
 	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, transforms *umapped,
-	VkQueue gqueue)
+	vulkan_queue gqueue)
 {
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
@@ -1060,7 +1073,8 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		.signalSemaphoreCount = 1,
 		.pSignalSemaphores = &info.sync.render_done[upcoming_index],
 	};
-	if (vkQueueSubmit(gqueue, 1, &submission_desc, info.sync.rendering[upcoming_index]) != VK_SUCCESS)
+	if (vkQueueSubmit(gqueue.handle, 1, &submission_desc,
+		info.sync.rendering[upcoming_index]) != VK_SUCCESS)
 		crash("vkQueueSubmit");
 	// present rendered image
 	VkPresentInfoKHR present_desc = {
@@ -1071,7 +1085,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		.pSwapchains = &swap.chain,
 		.pImageIndices = &swap.current,
 	};
-	vkQueuePresentKHR(gqueue, &present_desc);
+	vkQueuePresentKHR(gqueue.handle, &present_desc);
 }
 
 VkSampler sampler_create_or_crash(context *ctx)
@@ -1140,26 +1154,24 @@ int main()
 		MAX_FRAMES_RENDERING * sizeof(transforms),
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	u32 igqueue = ctx.specs->iq_graphics;
-	VkQueue gqueue;
-	vkGetDeviceQueue(ctx.device, igqueue, 0, &gqueue);
+	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
 	vulkan_image tex_image = image_upload(&ctx,
-		load_image("res/sky_bottom.png"), igqueue, gqueue);
+		load_image("res/sky_bottom.png"), gqueue);
 	VkImageView tex_view = image_view_create(ctx.device, tex_image.img,
 		VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, tex_image.mips);
 	VkSampler sampler = sampler_create_or_crash(&ctx);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, swap.dim, graphics_pass, ubuf, tex_view, sampler);
 	vulkan_buffer vbuf = data_upload(&ctx,
-		sizeof vertices, vertices, igqueue, gqueue,
+		sizeof vertices, vertices, gqueue,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	vulkan_buffer ibuf = data_upload(&ctx,
-		sizeof indices, indices, igqueue, gqueue,
+		sizeof indices, indices, gqueue,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	void *umapped;
 	vkMapMemory(ctx.device, ubuf.mem, 0, ubuf.size, 0, &umapped);
 	VkCommandPool pool = command_pool_create_or_crash(ctx.device,
-		igqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
         command_buffer_create_or_crash(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
 	sync_create_or_crash(ctx.device, MAX_FRAMES_RENDERING,
