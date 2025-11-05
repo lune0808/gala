@@ -116,12 +116,19 @@ bool format_has_stencil(VkFormat fmt)
 	    || fmt == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
-VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, vulkan_swapchain swap, VkRenderPass pass, VkImageView depth_view)
+typedef struct {
+	vulkan_swapchain base;
+	vulkan_bound_image_view depth_buffer;
+	VkRenderPass pass;
+	VkFramebuffer *framebuffer;
+} attached_swapchain;
+
+VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, vulkan_swapchain *swap, VkRenderPass pass, VkImageView depth_view)
 {
-	VkFramebuffer *framebuf = xmalloc(swap.n_slot * sizeof *framebuf);
-	for (u32 i = 0; i < swap.n_slot; i++) {
+	VkFramebuffer *framebuf = xmalloc(swap->n_slot * sizeof *framebuf);
+	for (u32 i = 0; i < swap->n_slot; i++) {
 		VkImageView attacht[] = {
-			swap.view[i],
+			swap->view[i],
 			depth_view,
 		};
 		VkFramebufferCreateInfo framebuf_desc = {
@@ -129,14 +136,63 @@ VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, vulkan_swapchain swap,
 			.renderPass = pass,
 			.attachmentCount = ARRAY_SIZE(attacht),
 			.pAttachments = attacht,
-			.width = swap.dim.width,
-			.height = swap.dim.height,
+			.width = swap->dim.width,
+			.height = swap->dim.height,
 			.layers = 1,
 		};
 		if (vkCreateFramebuffer(logical, &framebuf_desc, NULL, &framebuf[i]) != VK_SUCCESS)
 			crash("vkCreateFramebuffer");
 	}
 	return framebuf;
+}
+
+vulkan_bound_image_view depth_buffer_create(context *ctx, VkExtent2D dims)
+{
+	VkFormat candidates[] = {
+		VK_FORMAT_D32_SFLOAT,
+		VK_FORMAT_D24_UNORM_S8_UINT,
+		VK_FORMAT_D32_SFLOAT_S8_UINT,
+	};
+	VkFormat fmt = format_supported(ctx->physical_device, ARRAY_SIZE(candidates), candidates,
+		VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+	if (fmt == VK_FORMAT_UNDEFINED)
+		crash("no suitable format found for a depth buffer");
+	VkImageCreateInfo desc = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = fmt,
+		.extent = { dims.width, dims.height, 1 },
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+	return vulkan_bound_image_view_create(ctx, &desc,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+}
+
+attached_swapchain attached_swapchain_create(context *ctx)
+{
+	vulkan_swapchain base = vulkan_swapchain_create(ctx);
+	vulkan_bound_image_view depth_buffer = depth_buffer_create(ctx, base.dim);
+	VkRenderPass pass = render_pass_create_or_crash(ctx->device,
+		base.fmt, depth_buffer.img.fmt);
+	VkFramebuffer *framebuffer = framebuf_attach_or_crash(ctx->device,
+		&base, pass, depth_buffer.view);
+	return (attached_swapchain){ base, depth_buffer, pass, framebuffer };
+}
+
+void attached_swapchain_destroy(context *ctx, attached_swapchain *sc)
+{
+	for (u32 i = 0; i < sc->base.n_slot; i++) {
+		vkDestroyFramebuffer(ctx->device, sc->framebuffer[i], NULL);
+	}
+	vkDestroyRenderPass(ctx->device, sc->pass, NULL);
+	vulkan_bound_image_view_destroy(ctx, &sc->depth_buffer);
+	vulkan_swapchain_destroy(ctx, &sc->base);
 }
 
 typedef struct {
@@ -836,9 +892,8 @@ vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 	return vimg;
 }
 
-void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
-	vulkan_swapchain swap, pipeline pipe, VkFramebuffer *framebuf,
-	vulkan_buffer vbuf, vulkan_buffer ibuf, u32 upcoming_index)
+void command_buffer_record_or_crash(VkCommandBuffer cbuf, attached_swapchain *swap,
+	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, u32 upcoming_index)
 {
 	VkCommandBufferBeginInfo cmd_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -851,10 +906,10 @@ void command_buffer_record_or_crash(VkCommandBuffer cbuf, VkRenderPass pass,
 	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-		.renderPass = pass,
-		.framebuffer = framebuf[swap.i_slot],
+		.renderPass = swap->pass,
+		.framebuffer = swap->framebuffer[swap->base.i_slot],
 		.renderArea.offset = {0, 0},
-		.renderArea.extent = swap.dim,
+		.renderArea.extent = swap->base.dim,
 		.clearValueCount = ARRAY_SIZE(clear),
 		.pClearValues = clear,
 	};
@@ -924,20 +979,21 @@ typedef struct {
 } draw_calls;
 
 void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
-	vulkan_swapchain swap, VkFramebuffer *framebuf, VkRenderPass graphics_pass,
-	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, transforms *umapped,
-	vulkan_queue gqueue)
+	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
+	vulkan_buffer ibuf, transforms *umapped, vulkan_queue gqueue)
 {
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
 	vkResetFences(ctx->device, 1, &info.sync.rendering[upcoming_index]);
-	vkAcquireNextImageKHR(ctx->device, swap.handle, UINT64_MAX,
-		info.sync.present_ready[upcoming_index], VK_NULL_HANDLE, &swap.i_slot);
+	vkAcquireNextImageKHR(ctx->device, swap->base.handle, UINT64_MAX,
+		info.sync.present_ready[upcoming_index],
+		VK_NULL_HANDLE, &swap->base.i_slot);
 	// recording commands for next frame
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
-	transforms_upload(&umapped[upcoming_index], (float) swap.dim.width, (float) swap.dim.height);
+	transforms_upload(&umapped[upcoming_index],
+		(float) swap->base.dim.width, (float) swap->base.dim.height);
 	command_buffer_record_or_crash(info.commands[upcoming_index],
-		graphics_pass, swap, pipe, framebuf, vbuf, ibuf, upcoming_index);
+		swap, pipe, vbuf, ibuf, upcoming_index);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -960,8 +1016,8 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		.waitSemaphoreCount = 1,
 		.pWaitSemaphores = &info.sync.render_done[upcoming_index],
 		.swapchainCount = 1,
-		.pSwapchains = &swap.handle,
-		.pImageIndices = &swap.i_slot,
+		.pSwapchains = &swap->base.handle,
+		.pImageIndices = &swap->base.i_slot,
 	};
 	vkQueuePresentKHR(gqueue.handle, &present_desc);
 }
@@ -992,46 +1048,13 @@ VkSampler sampler_create_or_crash(context *ctx)
 	return sm;
 }
 
-vulkan_bound_image_view depth_buffer_create(context *ctx, VkExtent2D dims)
-{
-	VkFormat candidates[] = {
-		VK_FORMAT_D32_SFLOAT,
-		VK_FORMAT_D24_UNORM_S8_UINT,
-		VK_FORMAT_D32_SFLOAT_S8_UINT,
-	};
-	VkFormat fmt = format_supported(ctx->physical_device, ARRAY_SIZE(candidates), candidates,
-		VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
-	if (fmt == VK_FORMAT_UNDEFINED)
-		crash("no suitable format found for a depth buffer");
-	VkImageCreateInfo desc = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
-		.format = fmt,
-		.extent = { dims.width, dims.height, 1 },
-		.mipLevels = 1,
-		.arrayLayers = 1,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-	};
-	return vulkan_bound_image_view_create(ctx, &desc,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-}
-
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
 int main()
 {
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
-	vulkan_swapchain sc = vulkan_swapchain_create(&ctx);
-	vulkan_bound_image_view depth_buffer = depth_buffer_create(&ctx, sc.dim);
-	VkRenderPass graphics_pass = render_pass_create_or_crash(ctx.device,
-		sc.fmt, depth_buffer.img.fmt);
-	VkFramebuffer *framebuf = framebuf_attach_or_crash(ctx.device, sc,
-		graphics_pass, depth_buffer.view);
+	attached_swapchain sc = attached_swapchain_create(&ctx);
 	vulkan_buffer ubuf = buffer_create_or_crash(&ctx,
 		MAX_FRAMES_RENDERING * sizeof(transforms),
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -1043,7 +1066,7 @@ int main()
 		VK_IMAGE_ASPECT_COLOR_BIT);
 	VkSampler sampler = sampler_create_or_crash(&ctx);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.dim, graphics_pass, ubuf, tex_view, sampler);
+		ctx.device, sc.base.dim, sc.pass, ubuf, tex_view, sampler);
 	vulkan_buffer vbuf = data_upload(&ctx,
 		sizeof vertices, vertices, gqueue,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -1064,7 +1087,7 @@ int main()
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
 		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			sc, framebuf, graphics_pass, pipe, vbuf, ibuf, umapped,
+			&sc, pipe, vbuf, ibuf, umapped,
 			gqueue);
 		cpu_frame++;
 		double end_time = glfwGetTime();
@@ -1093,12 +1116,7 @@ int main()
 	vulkan_image_destroy(&ctx, &tex_image);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
 	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
-	for (u32 i = 0; i < sc.n_slot; i++) {
-		vkDestroyFramebuffer(ctx.device, framebuf[i], NULL);
-	}
-	vkDestroyRenderPass(ctx.device, graphics_pass, NULL);
-	vulkan_bound_image_view_destroy(&ctx, &depth_buffer);
-	vulkan_swapchain_destroy(&ctx, &sc);
+	attached_swapchain_destroy(&ctx, &sc);
 	context_fini(&ctx);
 	return 0;
 }
