@@ -16,8 +16,6 @@
 #include "swapchain.h"
 #include "image.h"
 
-#define MAX_FRAMES_RENDERING (2)
-
 VkRenderPass render_pass_create_or_crash(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
 {
@@ -408,7 +406,7 @@ static const vertex vertices[] = {
 	{ { -0.5f, +0.5f, -0.15f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
 };
 
-static const u16 indices[] = {
+static const u32 indices[] = {
 	0, 1, 2,
 	2, 3, 0,
 	4, 5, 6,
@@ -892,8 +890,7 @@ vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 	return vimg;
 }
 
-void command_buffer_record_or_crash(VkCommandBuffer cbuf, attached_swapchain *swap,
-	pipeline pipe, vulkan_buffer vbuf, vulkan_buffer ibuf, u32 upcoming_index)
+void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
 {
 	VkCommandBufferBeginInfo cmd_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -914,13 +911,10 @@ void command_buffer_record_or_crash(VkCommandBuffer cbuf, attached_swapchain *sw
 		.pClearValues = clear,
 	};
 	vkCmdBeginRenderPass(cbuf, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
-	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
-	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT16);
-	vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
-	u32 indx_cnt = (u32) ARRAY_SIZE(indices);
-	vkCmdDrawIndexed(cbuf, indx_cnt, 1, 0, 0, 0);
+}
+
+void command_buffer_end(VkCommandBuffer cbuf)
+{
 	vkCmdEndRenderPass(cbuf);
 	if (vkEndCommandBuffer(cbuf) != VK_SUCCESS)
 		crash("vkEndCommandBuffer");
@@ -992,8 +986,15 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
 	transforms_upload(&umapped[upcoming_index],
 		(float) swap->base.dim.width, (float) swap->base.dim.height);
-	command_buffer_record_or_crash(info.commands[upcoming_index],
-		swap, pipe, vbuf, ibuf, upcoming_index);
+	VkCommandBuffer cbuf = info.commands[upcoming_index];
+	command_buffer_begin(cbuf, swap);
+	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
+	vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
+	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
+	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
+	vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
+	command_buffer_end(cbuf);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
