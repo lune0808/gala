@@ -739,14 +739,14 @@ typedef struct {
 } vertex;
 
 static const vertex vertices[] = {
-	{ { -0.5f, -0.5f, 0.3f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
-	{ { +0.5f, -0.5f, 0.3f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
-	{ { +0.5f, +0.5f, 0.3f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
-	{ { -0.5f, +0.5f, 0.3f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
-	{ { -0.5f, -0.5f, 0.0f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
-	{ { +0.5f, -0.5f, 0.0f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
-	{ { +0.5f, +0.5f, 0.0f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
-	{ { -0.5f, +0.5f, 0.0f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
+	{ { -0.5f, -0.5f, +0.15f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
+	{ { +0.5f, -0.5f, +0.15f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
+	{ { +0.5f, +0.5f, +0.15f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
+	{ { -0.5f, +0.5f, +0.15f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
+	{ { -0.5f, -0.5f, -0.15f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
+	{ { +0.5f, -0.5f, -0.15f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
+	{ { +0.5f, +0.5f, -0.15f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
+	{ { -0.5f, +0.5f, -0.15f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
 };
 
 static const u16 indices[] = {
@@ -838,7 +838,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.rasterizerDiscardEnable = VK_FALSE,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.lineWidth = 1.0f,
-		.cullMode = VK_CULL_MODE_BACK_BIT,
+		.cullMode = VK_CULL_MODE_NONE,
 		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.depthBiasEnable = VK_FALSE,
 	};
@@ -1298,7 +1298,11 @@ void transforms_upload(void *to, float width, float height)
 	float time = (float) glfwGetTime();
 	float asp = width / height;
 	transforms tfm;
-	glm_rotate_make(tfm.model, time, (vec3){ 0.0f, 0.0f, 1.0f });
+	glm_rotate_make(tfm.model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
+	mat4 orbital;
+	glm_rotate_make(orbital, time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
+	glm_translate(orbital, (vec3){ 1.0f, 0.0f, 0.0f });
+	memcpy(tfm.model[3], orbital[3], sizeof(vec3));
 	glm_lookat(
 		(vec3){ 2.0f, 2.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
