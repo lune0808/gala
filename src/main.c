@@ -639,6 +639,7 @@ void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool,
 		crash("vkCreateCommandBuffers");
 }
 
+// TODO: yuck
 void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 	vulkan_queue xfer)
 {
@@ -984,6 +985,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		VK_NULL_HANDLE, &swap->base.i_slot);
 	// recording commands for next frame
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
+	// TODO: find how to change this stuff multiple times per frame?
 	transforms_upload(&umapped[upcoming_index],
 		(float) swap->base.dim.width, (float) swap->base.dim.height);
 	VkCommandBuffer cbuf = info.commands[upcoming_index];
