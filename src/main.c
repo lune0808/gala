@@ -932,24 +932,22 @@ void transforms_upload(void *to, float width, float height, float time)
 {
 	float asp = width / height;
 	mat4 model;
-	mat4 view;
-	mat4 proj;
-	mat4 final;
 	glm_rotate_make(model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
 	mat4 orbital;
 	glm_rotate_make(orbital, time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
 	glm_translate(orbital, (vec3){ 1.0f, 0.0f, 0.0f });
 	memcpy(model[3], orbital[3], sizeof(vec3));
+	mat4 view;
 	glm_lookat(
 		(vec3){ 2.0f, 2.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
 		(vec3){ 0.0f, 0.0f, 1.0f },
 		view
 	);
+	mat4 proj;
 	glm_perspective((float) M_PI/4.0f, asp, 0.1f, 10.0f, proj);
 	proj[1][1] *= -1.0f;
-	glm_mat4_mulN((mat4*[]){ &proj, &view, &model }, 3, final);
-	memcpy(to, &final, sizeof final);
+	glm_mat4_mulN((mat4*[]){ &proj, &view, &model }, 3, to);
 }
 
 typedef struct {
@@ -970,7 +968,6 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	// recording commands for next frame
 	float time = (float) glfwGetTime();
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
-	mat4 tfm;
 	VkCommandBuffer cbuf = info.commands[upcoming_index];
 	command_buffer_begin(cbuf, swap);
 	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
@@ -979,8 +976,11 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
 	for (u32 draw = 0; draw < 5; draw++) {
-		transforms_upload(&tfm, (float) swap->base.dim.width, (float) swap->base.dim.height, time + 3.0f * (float) draw);
-		vkCmdPushConstants(cbuf, pipe.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
+		mat4 tfm;
+		transforms_upload(&tfm, (float) swap->base.dim.width,
+			(float) swap->base.dim.height, time + 3.0f * (float) draw);
+		vkCmdPushConstants(cbuf, pipe.layout,
+			VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
 		vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
 	}
 	command_buffer_end(cbuf);
