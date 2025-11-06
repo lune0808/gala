@@ -2,10 +2,10 @@
 
 #include "shared.h"
 
-// uniform buffer
-layout(binding = 0) uniform UBO {
-	transforms_t transforms;
-};
+// uniforms
+layout(push_constant) uniform draw_data {
+	mat4 tfm;
+} draw;
 
 // in attributes
 layout(location = 0) in vec3 pos;
@@ -18,10 +18,7 @@ layout(location = 1) out vec2 vert_uv;
 
 void main()
 {
-	gl_Position = transforms.proj
-		    * transforms.view
-		    * transforms.model
-		    * vec4(pos, 1.0);
+	gl_Position = draw.tfm * vec4(pos, 1.0);
 	vert_color = col;
 	vert_uv = uv;
 }

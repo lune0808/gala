@@ -341,28 +341,15 @@ vulkan_buffer buffer_create_or_crash(context *ctx,
 	return (vulkan_buffer){ buf, mem, size };
 }
 
-void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf,
+void descr_set_config(VkDevice logical, VkDescriptorSet *set,
 	VkImageView tex_view, VkSampler tex_sm)
 {
-	VkDescriptorBufferInfo buf_desc = {
-		.buffer = buf.buf,
-		.offset = 0,
-		.range = sizeof(transforms),
-	};
 	VkDescriptorImageInfo tex_desc = {
 		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		.imageView = tex_view,
 		.sampler = tex_sm,
 	};
 	VkWriteDescriptorSet write_desc[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &buf_desc,
-		},
 		{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstBinding = 1,
@@ -374,10 +361,8 @@ void descr_set_config(VkDevice logical, VkDescriptorSet *set, vulkan_buffer buf,
 	};
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
 		write_desc[0].dstSet = set[i];
-		write_desc[1].dstSet = set[i];
 		vkUpdateDescriptorSets(logical,
 			ARRAY_SIZE(write_desc), write_desc, 0, NULL);
-		buf_desc.offset += sizeof(transforms);
 	}
 }
 
@@ -414,7 +399,7 @@ static const u32 indices[] = {
 };
 
 pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
-	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, vulkan_buffer ubuf,
+	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
 	VkImageView tex_view, VkSampler tex_sm)
 {
 	VkShaderModule vert_mod = build_shader_module_or_crash(vert_path, logical);
@@ -527,12 +512,6 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 	};
 	VkDescriptorSetLayoutBinding bind_desc[] = {
 		{
-			.binding = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-		},
-		{
 			.binding = 1,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.descriptorCount = 1,
@@ -543,10 +522,6 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		ARRAY_SIZE(bind_desc), bind_desc);
 	VkDescriptorPoolSize pool_sizes[] = {
 		{
-			.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
-		},
-		{
 			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
 		},
@@ -555,11 +530,17 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		ARRAY_SIZE(pool_sizes), pool_sizes);
 	VkDescriptorSet *set = descr_set_create_or_crash(logical,
 		dpool, set_lyt);
-	descr_set_config(logical, set, ubuf, tex_view, tex_sm);
+	descr_set_config(logical, set, tex_view, tex_sm);
 	VkPipelineLayoutCreateInfo unif_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount = 1,
 		.pSetLayouts = &set_lyt,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &(VkPushConstantRange){
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+			.offset = 0,
+			.size = sizeof(mat4),
+		},
 	};
 	VkPipelineLayout unif_lyt;
 	if (vkCreatePipelineLayout(logical, &unif_lyt_desc, NULL, &unif_lyt) != VK_SUCCESS)
@@ -947,25 +928,28 @@ void sync_create_or_crash(VkDevice logical, u32 cnt,
 	}
 }
 
-void transforms_upload(void *to, float width, float height)
+void transforms_upload(void *to, float width, float height, float time)
 {
-	float time = (float) glfwGetTime();
 	float asp = width / height;
-	transforms tfm;
-	glm_rotate_make(tfm.model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
+	mat4 model;
+	mat4 view;
+	mat4 proj;
+	mat4 final;
+	glm_rotate_make(model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
 	mat4 orbital;
 	glm_rotate_make(orbital, time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
 	glm_translate(orbital, (vec3){ 1.0f, 0.0f, 0.0f });
-	memcpy(tfm.model[3], orbital[3], sizeof(vec3));
+	memcpy(model[3], orbital[3], sizeof(vec3));
 	glm_lookat(
 		(vec3){ 2.0f, 2.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
 		(vec3){ 0.0f, 0.0f, 1.0f },
-		tfm.view
+		view
 	);
-	glm_perspective((float) M_PI/4.0f, asp, 0.1f, 10.0f, tfm.proj);
-	tfm.proj[1][1] *= -1.0f;
-	memcpy(to, &tfm, sizeof tfm);
+	glm_perspective((float) M_PI/4.0f, asp, 0.1f, 10.0f, proj);
+	proj[1][1] *= -1.0f;
+	glm_mat4_mulN((mat4*[]){ &proj, &view, &model }, 3, final);
+	memcpy(to, &final, sizeof final);
 }
 
 typedef struct {
@@ -975,7 +959,7 @@ typedef struct {
 
 void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
-	vulkan_buffer ibuf, transforms *umapped, vulkan_queue gqueue)
+	vulkan_buffer ibuf, vulkan_queue gqueue)
 {
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
@@ -984,10 +968,9 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		info.sync.present_ready[upcoming_index],
 		VK_NULL_HANDLE, &swap->base.i_slot);
 	// recording commands for next frame
+	float time = (float) glfwGetTime();
 	vkResetCommandBuffer(info.commands[upcoming_index], 0);
-	// TODO: find how to change this stuff multiple times per frame?
-	transforms_upload(&umapped[upcoming_index],
-		(float) swap->base.dim.width, (float) swap->base.dim.height);
+	mat4 tfm;
 	VkCommandBuffer cbuf = info.commands[upcoming_index];
 	command_buffer_begin(cbuf, swap);
 	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
@@ -995,6 +978,11 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
+	transforms_upload(&tfm, (float) swap->base.dim.width, (float) swap->base.dim.height, time);
+	vkCmdPushConstants(cbuf, pipe.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
+	vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
+	transforms_upload(&tfm, (float) swap->base.dim.width, (float) swap->base.dim.height, time + 5.0f);
+	vkCmdPushConstants(cbuf, pipe.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
 	vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
 	command_buffer_end(cbuf);
 	// submitting commands for next frame
@@ -1058,10 +1046,6 @@ int main()
 {
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
-	vulkan_buffer ubuf = buffer_create_or_crash(&ctx,
-		MAX_FRAMES_RENDERING * sizeof(transforms),
-		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
 	vulkan_image tex_image = image_upload(&ctx,
 		load_image("res/sky_bottom.png"), gqueue);
@@ -1069,15 +1053,13 @@ int main()
 		VK_IMAGE_ASPECT_COLOR_BIT);
 	VkSampler sampler = sampler_create_or_crash(&ctx);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, ubuf, tex_view, sampler);
+		ctx.device, sc.base.dim, sc.pass, tex_view, sampler);
 	vulkan_buffer vbuf = data_upload(&ctx,
 		sizeof vertices, vertices, gqueue,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	vulkan_buffer ibuf = data_upload(&ctx,
 		sizeof indices, indices, gqueue,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-	void *umapped;
-	vkMapMemory(ctx.device, ubuf.mem, 0, ubuf.size, 0, &umapped);
 	VkCommandPool pool = command_pool_create_or_crash(ctx.device,
 		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
@@ -1090,7 +1072,7 @@ int main()
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
 		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			&sc, pipe, vbuf, ibuf, umapped,
+			&sc, pipe, vbuf, ibuf,
 			gqueue);
 		cpu_frame++;
 		double end_time = glfwGetTime();
@@ -1106,8 +1088,6 @@ int main()
 	}
 	vkFreeCommandBuffers(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(ctx.device, pool, NULL);
-	vkDestroyBuffer(ctx.device, ubuf.buf, NULL);
-	vkFreeMemory(ctx.device, ubuf.mem, NULL);
 	vkFreeMemory(ctx.device, ibuf.mem, NULL);
 	vkDestroyBuffer(ctx.device, ibuf.buf, NULL);
 	vkFreeMemory(ctx.device, vbuf.mem, NULL);
