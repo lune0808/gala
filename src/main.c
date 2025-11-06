@@ -960,7 +960,7 @@ typedef struct {
 
 orbit_tree orbit_tree_init()
 {
-	u32 n_orbit = 1+5;
+	u32 n_orbit = 1+7;
 	char *mem = xmalloc(n_orbit * (sizeof(mat4) + 2 * sizeof(orbiting)));
 	mat4 *tfm_workbuf = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
@@ -969,8 +969,10 @@ orbit_tree orbit_tree_init()
 	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
 	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.4f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
 	orbit_specs[3] = (orbiting){ { 3.0f, 0.0f, 0.0f }, 0.9f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
-	orbit_specs[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {0.0f, 5.0f, 0.0f}, 0.0f, 3 };
-	orbit_specs[5] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.4f, {2.0f, 0.0f, 0.0f}, 0.0f, 4 };
+	orbit_specs[4] = (orbiting){ { 1.3f, 0.0f, 0.0f }, 0.3f, {0.0f, 1.0f, 0.0f}, 0.0f, 3 };
+	orbit_specs[5] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.4f, {1.0f, 0.0f, 0.0f}, 0.0f, 4 };
+	orbit_specs[6] = (orbiting){ { 0.9f, 4.8f, 0.9f }, 0.3f, {0.0f, 6.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[7] = (orbiting){ { 0.1f, 2.2f, 0.0f }, 0.8f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
 	return (orbit_tree){ 4, n_orbit, tfm_workbuf, orbit_specs, orbit_workbuf };
 }
 
