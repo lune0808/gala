@@ -978,12 +978,11 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
-	transforms_upload(&tfm, (float) swap->base.dim.width, (float) swap->base.dim.height, time);
-	vkCmdPushConstants(cbuf, pipe.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
-	vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
-	transforms_upload(&tfm, (float) swap->base.dim.width, (float) swap->base.dim.height, time + 5.0f);
-	vkCmdPushConstants(cbuf, pipe.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
-	vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
+	for (u32 draw = 0; draw < 5; draw++) {
+		transforms_upload(&tfm, (float) swap->base.dim.width, (float) swap->base.dim.height, time + 3.0f * (float) draw);
+		vkCmdPushConstants(cbuf, pipe.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
+		vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
+	}
 	command_buffer_end(cbuf);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
