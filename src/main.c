@@ -947,10 +947,9 @@ void transforms_upload(void *to, float width, float height, float time)
 	float asp = width / height;
 	mat4 model;
 	glm_rotate_make(model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
-	mat4 orbital;
-	glm_rotate_make(orbital, time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
-	glm_translate(orbital, (vec3){ 1.0f, 0.0f, 0.0f });
-	memcpy(model[3], orbital[3], sizeof(vec3));
+	vec3 offset = { 1.0f, 0.0f, 0.0f };
+	memcpy(model[3], offset, sizeof offset);
+	glm_vec3_rotate(model[3], time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
 	mat4 view;
 	glm_lookat(
 		(vec3){ 2.0f, 2.0f, 2.0f },
