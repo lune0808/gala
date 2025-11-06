@@ -1,4 +1,4 @@
-#version 450 core
+#version 450
 
 layout(location = 0) in vec3 vert_color;
 layout(location = 1) in vec2 vert_uv;
