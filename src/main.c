@@ -948,6 +948,34 @@ typedef struct {
 	u32 parent;
 } orbiting;
 
+typedef struct {
+	u32 height;
+	u32 n_orbit;
+	mat4 *tfm_workbuf;
+	orbiting *orbit_specs;
+	orbiting *orbit_workbuf;
+} orbit_tree;
+
+orbit_tree orbit_tree_init()
+{
+	u32 n_orbit = 1+4;
+	char *mem = xmalloc(n_orbit * (sizeof(mat4) + 2 * sizeof(orbiting)));
+	mat4 *tfm_workbuf = (void*) mem;
+	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
+	orbiting *orbit_workbuf = (void*) (mem + n_orbit * (sizeof(mat4) + sizeof(orbiting)));
+	orbit_specs[0] = (orbiting){ {}, 1.0f, 0 };
+	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, 0 };
+	orbit_specs[2] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 0 };
+	orbit_specs[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 2 };
+	orbit_specs[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 3 };
+	return (orbit_tree){ 3, n_orbit, tfm_workbuf, orbit_specs, orbit_workbuf };
+}
+
+void orbit_tree_fini(orbit_tree *tree)
+{
+	free(tree->tfm_workbuf);
+}
+
 void flatten_once(u32 n_orbit, orbiting *orbit, mat4 *tfm)
 {
 	// skip first element, it does nothing
@@ -961,6 +989,18 @@ void flatten_once(u32 n_orbit, orbiting *orbit, mat4 *tfm)
 		glm_mat4_mul(trans, tfm[i], tfm[i]);
 		glm_mat4_mul(tfm[parent], tfm[i], tfm[i]);
 		orbit[i] = orbit[parent];
+	}
+}
+
+void flatten(orbit_tree *tree)
+{
+	mat4 identity = GLM_MAT4_IDENTITY_INIT;
+	memcpy(tree->orbit_workbuf, tree->orbit_specs, tree->n_orbit * sizeof(orbiting));
+	for (u32 i = 0; i < tree->n_orbit; i++) {
+		memcpy(tree->tfm_workbuf[i], identity, sizeof identity);
+	}
+	for (u32 i = 0; i < tree->height; i++) {
+		flatten_once(tree->n_orbit, tree->orbit_workbuf, tree->tfm_workbuf);
 	}
 }
 
@@ -992,9 +1032,6 @@ typedef struct {
 	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
 } draw_calls;
 
-static u32 n_orbit = 1+4;
-static orbiting *orbit = NULL;
-
 void camera_matrix(float width, float height, mat4 dest)
 {
 	mat4 view;
@@ -1011,25 +1048,10 @@ void camera_matrix(float width, float height, mat4 dest)
 	glm_mat4_mul(proj, view, dest);
 }
 
-static orbiting *orbit_dupe;
-static mat4 *orbit_tfm;
-static u32 orbit_tree_height;
-
 void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
-	vulkan_buffer ibuf, vulkan_queue gqueue)
+	vulkan_buffer ibuf, vulkan_queue gqueue, orbit_tree *tree)
 {
-	if (!orbit) {
-		orbit = xmalloc(n_orbit * sizeof(*orbit));
-		orbit[0] = (orbiting){ {}, 1.0f, 0 };
-		orbit[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, 0 };
-		orbit[2] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 0 };
-		orbit[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 2 };
-		orbit[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 3 };
-		orbit_dupe = xmalloc(n_orbit * sizeof(*orbit_dupe));
-		orbit_tfm = xmalloc(n_orbit * sizeof(*orbit_tfm));
-		orbit_tree_height = 3;
-	}
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
 	vkResetFences(ctx->device, 1, &info.sync.rendering[upcoming_index]);
@@ -1045,21 +1067,14 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
-	mat4 identity = GLM_MAT4_IDENTITY_INIT;
-	memcpy(orbit_dupe, orbit, n_orbit * sizeof(*orbit));
-	for (u32 i = 0; i < n_orbit; i++) {
-		memcpy(&orbit_tfm[i], &identity, sizeof identity);
-	}
-	for (u32 i = 0; i < orbit_tree_height; i++) {
-		flatten_once(n_orbit, orbit_dupe, orbit_tfm);
-	}
+	flatten(tree);
 	mat4 viewproj;
 	camera_matrix((float) swap->base.dim.width,
 		      (float) swap->base.dim.height,
 		      viewproj);
-	for (u32 draw = 1; draw < n_orbit; draw++) {
+	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
-		memcpy(&pushc.pos_tfm, &orbit_tfm[draw], sizeof(orbit_tfm[draw]));
+		memcpy(&pushc.pos_tfm, &tree->tfm_workbuf[draw], sizeof(mat4));
 		glm_mat4_mul(viewproj, pushc.pos_tfm, pushc.pos_tfm);
 		// normal matrix
 		glm_mat4_inv(pushc.pos_tfm, pushc.norm_tfm);
@@ -1153,17 +1168,19 @@ int main()
 		draws.sync.present_ready, draws.sync.render_done, draws.sync.rendering);
 
 	u32 cpu_frame = 0;
+	orbit_tree tree = orbit_tree_init();
 	while (!glfwWindowShouldClose(ctx.window)) {
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
 		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
 			&sc, pipe, vbuf, ibuf,
-			gqueue);
+			gqueue, &tree);
 		cpu_frame++;
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 	}
 	printf("\n");
+	orbit_tree_fini(&tree);
 
 	vkDeviceWaitIdle(ctx.device);
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
