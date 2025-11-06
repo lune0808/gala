@@ -375,27 +375,35 @@ typedef struct {
 } pipeline;
 
 typedef struct {
-	vec3 pos;
-	vec3 col;
+	vec3 position;
+	vec3 normal;
 	vec2 uv;
 } vertex;
 
 static const vertex vertices[] = {
-	{ { -0.5f, -0.5f, +0.15f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
-	{ { +0.5f, -0.5f, +0.15f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
-	{ { +0.5f, +0.5f, +0.15f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
-	{ { -0.5f, +0.5f, +0.15f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
-	{ { -0.5f, -0.5f, -0.15f }, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f} },
-	{ { +0.5f, -0.5f, -0.15f }, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f} },
-	{ { +0.5f, +0.5f, -0.15f }, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f} },
-	{ { -0.5f, +0.5f, -0.15f }, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f} },
+	{ { -0.5f, +0.5f, -0.5f }, {0.5f, 0.0f, 0.0f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { +0.5f, +0.5f, -0.5f }, {0.0f, 0.5f, 0.0f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { +0.5f, -0.5f, -0.5f }, {0.5f, 0.5f, 0.0f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { -0.5f, -0.5f, -0.5f }, {0.0f, 0.0f, 0.5f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { -0.5f, +0.5f, +0.5f }, {0.0f, 0.5f, 0.5f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { +0.5f, +0.5f, +0.5f }, {0.5f, 0.0f, 0.5f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { +0.5f, -0.5f, +0.5f }, {0.5f, 0.5f, 0.5f}, {1.0f/1024.0f, 1.0f/1024.0f} },
+	{ { -0.5f, -0.5f, +0.5f }, {0.0f, 0.0f, 0.0f}, {1.0f/1024.0f, 1.0f/1024.0f} },
 };
 
 static const u32 indices[] = {
 	0, 1, 2,
-	2, 3, 0,
-	4, 5, 6,
-	6, 7, 4,
+	0, 2, 3,
+	2, 7, 3,
+	2, 6, 7,
+	4, 7, 6,
+	6, 5, 4,
+	0, 4, 5,
+	1, 0, 5,
+	0, 3, 7,
+	0, 7, 4,
+	1, 5, 6,
+	2, 1, 6,
 };
 
 pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
@@ -426,13 +434,13 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 			.binding = 0,
 			.location = 0,
 			.format = VK_FORMAT_R32G32B32_SFLOAT,
-			.offset = offsetof(vertex, pos),
+			.offset = offsetof(vertex, position),
 		},
 		{
 			.binding = 0,
 			.location = 1,
 			.format = VK_FORMAT_R32G32B32_SFLOAT,
-			.offset = offsetof(vertex, col),
+			.offset = offsetof(vertex, normal),
 		},
 		{
 			.binding = 0,
@@ -480,7 +488,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.rasterizerDiscardEnable = VK_FALSE,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.lineWidth = 1.0f,
-		.cullMode = VK_CULL_MODE_NONE,
+		.cullMode = VK_CULL_MODE_BACK_BIT,
 		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.depthBiasEnable = VK_FALSE,
 	};
