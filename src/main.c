@@ -946,7 +946,9 @@ void transforms_upload(void *to, float width, float height, float time)
 {
 	float asp = width / height;
 	mat4 model;
-	glm_rotate_make(model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
+	float scl = 0.1f;
+	glm_scale_make(model, (vec3){ scl, scl, scl });
+	glm_rotate(model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
 	vec3 offset = { 1.0f, 0.0f, 0.0f };
 	memcpy(model[3], offset, sizeof offset);
 	glm_vec3_rotate(model[3], time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
@@ -988,7 +990,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
-	for (u32 draw = 0; draw < 5; draw++) {
+	for (u32 draw = 0; draw < 16; draw++) {
 		struct push_constant_data pushc;
 		transforms_upload(&pushc.pos_tfm, (float) swap->base.dim.width,
 			(float) swap->base.dim.height, time + 3.0f * (float) draw);
