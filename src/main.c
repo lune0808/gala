@@ -960,17 +960,18 @@ typedef struct {
 
 orbit_tree orbit_tree_init()
 {
-	u32 n_orbit = 1+4;
+	u32 n_orbit = 1+5;
 	char *mem = xmalloc(n_orbit * (sizeof(mat4) + 2 * sizeof(orbiting)));
 	mat4 *tfm_workbuf = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
 	orbiting *orbit_workbuf = (void*) (mem + n_orbit * (sizeof(mat4) + sizeof(orbiting)));
 	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
 	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
-	orbit_specs[2] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
-	orbit_specs[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
-	orbit_specs[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {1.0f, 0.0f, 0.0f}, 0.0f, 3 };
-	return (orbit_tree){ 3, n_orbit, tfm_workbuf, orbit_specs, orbit_workbuf };
+	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.4f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
+	orbit_specs[3] = (orbiting){ { 3.0f, 0.0f, 0.0f }, 0.9f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {0.0f, 5.0f, 0.0f}, 0.0f, 3 };
+	orbit_specs[5] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.4f, {2.0f, 0.0f, 0.0f}, 0.0f, 4 };
+	return (orbit_tree){ 4, n_orbit, tfm_workbuf, orbit_specs, orbit_workbuf };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
@@ -1073,9 +1074,10 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
 	float now = (float) glfwGetTime();
 	for (u32 i = 1; i < tree->n_orbit; i++) {
-		float angle = now;
+		float angle = now * (float) i;
 		tree->orbit_specs[i].angle = fmodf(angle, 6.28318530f);
 	}
+	tree->orbit_specs[2].offset[0] = 0.5f * sinf(now * 0.5f);
 	flatten(tree);
 	mat4 viewproj;
 	camera_matrix((float) swap->base.dim.width,
