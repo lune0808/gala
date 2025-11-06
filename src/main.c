@@ -945,6 +945,8 @@ void sync_create_or_crash(VkDevice logical, u32 cnt,
 typedef struct {
 	vec3 offset;
 	float scale;
+	vec3 axis;
+	float angle;
 	u32 parent;
 } orbiting;
 
@@ -963,11 +965,11 @@ orbit_tree orbit_tree_init()
 	mat4 *tfm_workbuf = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
 	orbiting *orbit_workbuf = (void*) (mem + n_orbit * (sizeof(mat4) + sizeof(orbiting)));
-	orbit_specs[0] = (orbiting){ {}, 1.0f, 0 };
-	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, 0 };
-	orbit_specs[2] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 0 };
-	orbit_specs[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 2 };
-	orbit_specs[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, 3 };
+	orbit_specs[0] = (orbiting){ {}, 1.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	orbit_specs[2] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	orbit_specs[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[4] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {1.0f, 0.0f, 0.0f}, 0.0f, 3 };
 	return (orbit_tree){ 3, n_orbit, tfm_workbuf, orbit_specs, orbit_workbuf };
 }
 
@@ -982,10 +984,12 @@ void flatten_once(u32 n_orbit, orbiting *orbit, mat4 *tfm)
 	// iterate in reverse so it's like the orbit buffer is immutable
 	for (u32 i = n_orbit-1; i > 0; i--) {
 		u32 parent = orbit[i].parent;
-		mat4 scale, trans;
+		mat4 scale, trans, rot;
 		glm_scale_make(scale, (vec3){ orbit[i].scale, orbit[i].scale, orbit[i].scale });
 		glm_translate_make(trans, orbit[i].offset);
+		glm_rotate_make(rot, orbit[i].angle, orbit[i].axis);
 		glm_mat4_mul(scale, tfm[i], tfm[i]);
+		glm_mat4_mul(rot  , tfm[i], tfm[i]);
 		glm_mat4_mul(trans, tfm[i], tfm[i]);
 		glm_mat4_mul(tfm[parent], tfm[i], tfm[i]);
 		orbit[i] = orbit[parent];
@@ -1067,6 +1071,11 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
+	float now = (float) glfwGetTime();
+	for (u32 i = 1; i < tree->n_orbit; i++) {
+		float angle = now;
+		tree->orbit_specs[i].angle = fmodf(angle, 6.28318530f);
+	}
 	flatten(tree);
 	mat4 viewproj;
 	camera_matrix((float) swap->base.dim.width,
