@@ -965,7 +965,7 @@ orbit_tree orbit_tree_init()
 	mat4 *tfm_workbuf = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
 	orbiting *orbit_workbuf = (void*) (mem + n_orbit * (sizeof(mat4) + sizeof(orbiting)));
-	orbit_specs[0] = (orbiting){ {}, 1.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
 	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.5f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
 	orbit_specs[2] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
 	orbit_specs[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.3f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
@@ -988,10 +988,10 @@ void flatten_once(u32 n_orbit, orbiting *orbit, mat4 *tfm)
 		glm_scale_make(scale, (vec3){ orbit[i].scale, orbit[i].scale, orbit[i].scale });
 		glm_translate_make(trans, orbit[i].offset);
 		glm_rotate_make(rot, orbit[i].angle, orbit[i].axis);
-		glm_mat4_mul(scale, tfm[i], tfm[i]);
-		glm_mat4_mul(rot  , tfm[i], tfm[i]);
-		glm_mat4_mul(trans, tfm[i], tfm[i]);
-		glm_mat4_mul(tfm[parent], tfm[i], tfm[i]);
+		mat4 acc;
+		mat4 *chain[] = { &tfm[parent], &trans, &rot, &scale };
+		glm_mat4_mulN(chain, ARRAY_SIZE(chain), acc);
+		glm_mat4_mul(acc, tfm[i], tfm[i]);
 		orbit[i] = orbit[parent];
 	}
 }
