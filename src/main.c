@@ -553,7 +553,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.pPushConstantRanges = &(VkPushConstantRange){
 			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
 			.offset = 0,
-			.size = sizeof(mat4),
+			.size = sizeof(struct push_constant_data),
 		},
 	};
 	VkPipelineLayout unif_lyt;
@@ -990,11 +990,14 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
 	for (u32 draw = 0; draw < 5; draw++) {
-		mat4 tfm;
-		transforms_upload(&tfm, (float) swap->base.dim.width,
+		struct push_constant_data pushc;
+		transforms_upload(&pushc.pos_tfm, (float) swap->base.dim.width,
 			(float) swap->base.dim.height, time + 3.0f * (float) draw);
+		// normal matrix
+		glm_mat4_inv(pushc.pos_tfm, pushc.norm_tfm);
+		glm_mat4_transpose(pushc.norm_tfm);
 		vkCmdPushConstants(cbuf, pipe.layout,
-			VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(tfm), &tfm);
+			VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pushc), &pushc);
 		vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
 	}
 	command_buffer_end(cbuf);
