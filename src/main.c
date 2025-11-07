@@ -1043,25 +1043,31 @@ void transforms_upload(void *to, float width, float height, float time)
 }
 
 typedef struct {
+	mat4 tfm;
+	versor orientation;
+	vec3 neg_pos;
+	float aspect; // w/h
+	float fov_rad;
+	float near;
+	float far;
+} camera;
+
+void camera_matrix(camera *cam)
+{
+	mat4 trans;
+	glm_translate_make(trans, cam->neg_pos);
+	mat4 orient;
+	glm_quat_mat4t(cam->orientation, orient);
+	mat4 proj;
+	glm_perspective(cam->fov_rad, cam->aspect, cam->near, cam->far, proj);
+	proj[1][1] *= -1.0f;
+	glm_mat4_mulN((mat4*[]){ &proj, &orient, &trans }, 3, cam->tfm);
+}
+
+typedef struct {
 	fences sync;
 	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
 } draw_calls;
-
-void camera_matrix(float width, float height, mat4 dest)
-{
-	mat4 view;
-	glm_lookat(
-		(vec3){ 0.0f, -3.0f, 2.0f },
-		(vec3){ 0.0f, 0.0f, 0.0f },
-		(vec3){ 0.0f, 1.0f, 0.0f },
-		view
-	);
-	float asp = width / height;
-	mat4 proj;
-	glm_perspective((float) M_PI/4.0f, asp, 0.1f, 10.0f, proj);
-	proj[1][1] *= -1.0f;
-	glm_mat4_mul(proj, view, dest);
-}
 
 void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
@@ -1082,10 +1088,17 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
+	camera cam;
+	cam.fov_rad = (float) M_PI / 4.0f;
+	cam.aspect = (float) swap->base.dim.width / (float) swap->base.dim.height;
+	cam.far = 10.0f;
+	cam.near = 0.1f;
+	glm_vec3_negate_to((vec3){ 0.0f, -3.0f, 0.0f }, cam.neg_pos);
+	glm_quat_identity(cam.orientation);
+	glm_quat_from_vecs((vec3){ 0.0f, 1.0f, 0.0f }, (vec3){ 0.0f, 0.0f, 1.0f }, cam.orientation);
+	camera_matrix(&cam);
 	mat4 viewproj;
-	camera_matrix((float) swap->base.dim.width,
-		      (float) swap->base.dim.height,
-		      viewproj);
+	memcpy(viewproj, cam.tfm, sizeof(mat4));
 	float now = (float) glfwGetTime();
 	flatten(tree, now);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
