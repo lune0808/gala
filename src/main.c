@@ -594,7 +594,8 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 		.pSetLayouts = &set_lyt,
 		.pushConstantRangeCount = 1,
 		.pPushConstantRanges = &(VkPushConstantRange){
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+				    | VK_SHADER_STAGE_FRAGMENT_BIT,
 			.offset = 0,
 			.size = sizeof(struct push_constant_data),
 		},
@@ -1203,13 +1204,15 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	flatten(tree, now);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
-		orbit_tree_index(tree, draw, now, pushc.pos_tfm);
-		glm_mat4_mul(cam->tfm, pushc.pos_tfm, pushc.pos_tfm);
+		orbit_tree_index(tree, draw, now, pushc.model);
+		glm_mat4_mul(cam->tfm, pushc.model, pushc.mvp);
 		// normal matrix
-		glm_mat4_inv(pushc.pos_tfm, pushc.norm_tfm);
-		glm_mat4_transpose(pushc.norm_tfm);
+		glm_mat4_inv(pushc.mvp, pushc.normalmat);
+		glm_mat4_transpose(pushc.normalmat);
+		memcpy(pushc.normalmat[3], cam->pos, sizeof(vec3));
 		vkCmdPushConstants(cbuf, pipe.layout,
-			VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pushc), &pushc);
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			0, sizeof(pushc), &pushc);
 		vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
 	}
 

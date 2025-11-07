@@ -7,20 +7,22 @@ layout(push_constant) uniform draw_data {
 	push_constant_data draw;
 };
 
-// in attributes
+// attributes
 layout(location = 0) in vec3 pos;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec2 uv;
 
-// out attributes
-layout(location = 0) out vec3 vert_normal;
-layout(location = 1) out vec2 vert_uv;
+// varyings
+layout(location = 0) out vec3 vert_world_pos;
+layout(location = 1) out vec3 vert_normal;
+layout(location = 2) out vec2 vert_uv;
 
 void main()
 {
-	gl_Position = draw.pos_tfm * vec4(pos, 1.0);
 	vert_uv = uv;
-	mat3 norm_tfm = mat3(draw.norm_tfm);
-	vert_normal = norm_tfm * normal;
+	mat3 normalmat = mat3(draw.normalmat);
+	vert_normal = normalmat * normal;
+	vert_world_pos = (draw.model * vec4(pos, 1.0)).xyz;
+	gl_Position = draw.mvp * vec4(pos, 1.0);
 }
 

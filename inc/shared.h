@@ -6,8 +6,9 @@
 #endif
 
 struct push_constant_data {
-	mat4 pos_tfm;
-	mat4 norm_tfm;
+	mat4 mvp;
+	mat4 normalmat; // row 3.xyz = camera position
+	mat4 model;
 };
 
 #endif /* GALA_SHARED_H */
