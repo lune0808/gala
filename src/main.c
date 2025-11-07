@@ -974,7 +974,7 @@ orbit_tree orbit_tree_init()
 	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 3.0f, {0.2f, 0.0f, 9.0f}, 0.8f, 2 };
 	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 4.0f, {0.1f, 0.6f, 0.0f}, 1.0f, 3 };
 	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 5.0f, {1.0f, 0.0f, 0.0f}, 7.1f, 4 };
-	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f}, 6.0f, {1.0f, 1.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f},-6.0f, {1.0f, 1.0f, 1.0f}, 0.0f, 2 };
 	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 7.0f, {1.0f, 0.0f, 0.0f}, 0.6f, 2 };
 	return (orbit_tree){ 4, n_orbit, worldpos, orbit_specs, parent };
 }
@@ -1065,15 +1065,19 @@ void camera_matrix(camera *cam)
 	glm_mat4_mul(cam->tfm, trans, cam->tfm);
 }
 
-camera camera_init(VkExtent2D range)
+camera camera_init(VkExtent2D range, vec3 pos, vec3 target)
 {
 	camera cam;
 	cam.fov_rad = (float) M_PI / 4.0f;
 	cam.aspect = (float) range.width / (float) range.height;
 	cam.far = 10.0f;
 	cam.near = 0.1f;
-	glm_vec3_negate_to((vec3){ 0.0f, -3.0f, 0.0f }, cam.neg_pos);
-	glm_quat_from_vecs((vec3){ 0.0f, 1.0f, 0.0f }, (vec3){ 0.0f, 0.0f, 1.0f }, cam.orientation);
+	glm_vec3_negate_to(pos, cam.neg_pos);
+	vec3 dir;
+	glm_vec3_sub(target, pos, dir);
+	glm_vec3_normalize(dir);
+	vec3 neg_z = { 0.0f, 0.0f, -1.0f };
+	glm_quat_from_vecs(neg_z, dir, cam.orientation);
 	return cam;
 }
 
@@ -1202,7 +1206,9 @@ int main()
 
 	u32 cpu_frame = 0;
 	orbit_tree tree = orbit_tree_init();
-	camera cam = camera_init(sc.base.dim);
+	camera cam = camera_init(sc.base.dim,
+		(vec3){ 0.0f, -3.0f, 2.0f },
+		(vec3){ 0.0f, 0.0f, 0.0f });
 	while (!glfwWindowShouldClose(ctx.window)) {
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
