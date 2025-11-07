@@ -1072,7 +1072,7 @@ void camera_axes(camera *cam, mat3 axes)
 	glm_mat4_pick3(orient, axes);
 }
 
-camera camera_init(VkExtent2D range, vec3 pos, vec3 target)
+camera camera_init(VkExtent2D range, vec3 pos, vec3 target, GLFWwindow *window)
 {
 	camera cam;
 	cam.fov_rad = (float) M_PI / 4.0f;
@@ -1085,6 +1085,8 @@ camera camera_init(VkExtent2D range, vec3 pos, vec3 target)
 	glm_vec3_normalize(dir);
 	vec3 neg_z = { 0.0f, 0.0f, -1.0f };
 	glm_quat_from_vecs(neg_z, dir, cam.orientation);
+
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	return cam;
 }
 
@@ -1093,24 +1095,20 @@ void camera_update(camera *cam, GLFWwindow *window, float dt)
 	float speed = 2.0f;
 	mat3 axes;
 	camera_axes(cam, axes);
-	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
 		glm_vec3_muladds(axes[0], +dt * speed, cam->neg_pos);
-	}
-	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
 		glm_vec3_muladds(axes[0], -dt * speed, cam->neg_pos);
-	}
-	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
 		glm_vec3_muladds(axes[2], -dt * speed, cam->neg_pos);
-	}
-	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
 		glm_vec3_muladds(axes[2], +dt * speed, cam->neg_pos);
-	}
-	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
 		glm_vec3_muladds(axes[1], -dt * speed, cam->neg_pos);
-	}
-	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
 		glm_vec3_muladds(axes[1], +dt * speed, cam->neg_pos);
-	}
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, GLFW_TRUE);
 }
 
 typedef struct {
@@ -1240,7 +1238,8 @@ int main()
 	orbit_tree tree = orbit_tree_init();
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -3.0f, 2.0f },
-		(vec3){ 0.0f, 0.0f, 0.0f });
+		(vec3){ 0.0f, 0.0f, 0.0f },
+		ctx.window);
 	float dt = 0.0f;
 	while (!glfwWindowShouldClose(ctx.window)) {
 		double beg_time = glfwGetTime();
