@@ -943,10 +943,10 @@ void sync_create_or_crash(VkDevice logical, u32 cnt,
 }
 
 typedef struct {
-	vec3 offset;
-	float scale;
-	vec3 axis;
-	float angle;
+	vec3 offset; // initial position & phase
+	float scale; // world scale
+	vec3 axis;   // orbiting axis
+	float angle; // running orbit angle // TODO: maybe speed would be more relevant
 	u32 parent;
 } orbiting;
 
@@ -955,25 +955,26 @@ typedef struct {
 	u32 n_orbit;
 	mat4 *tfm_workbuf;
 	orbiting *orbit_specs;
-	orbiting *orbit_workbuf;
+	u32 *index;
 } orbit_tree;
 
 orbit_tree orbit_tree_init()
 {
-	u32 n_orbit = 1+7;
+	u32 n_orbit = 1
+		    + 7;
 	char *mem = xmalloc(n_orbit * (sizeof(mat4) + 2 * sizeof(orbiting)));
 	mat4 *tfm_workbuf = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
-	orbiting *orbit_workbuf = (void*) (mem + n_orbit * (sizeof(mat4) + sizeof(orbiting)));
+	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(mat4)));
 	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
 	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
 	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
-	orbit_specs[3] = (orbiting){ { 1.0f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
-	orbit_specs[4] = (orbiting){ { 0.5f, 0.0f, 0.0f }, 0.15f, {0.0f, 1.0f, 0.0f}, 0.0f, 3 };
-	orbit_specs[5] = (orbiting){ { 0.2f, 0.0f, 0.0f }, 0.06f, {1.0f, 0.0f, 0.0f}, 0.0f, 4 };
-	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.2f }, 0.10f, {0.0f, 6.0f, 1.0f}, 0.0f, 2 };
-	orbit_specs[7] = (orbiting){ { 0.1f,-2.0f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
-	return (orbit_tree){ 4, n_orbit, tfm_workbuf, orbit_specs, orbit_workbuf };
+	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 0.0f, 3 };
+	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 0.0f, 4 };
+	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
+	return (orbit_tree){ 4, n_orbit, tfm_workbuf, orbit_specs, parent };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
@@ -981,32 +982,32 @@ void orbit_tree_fini(orbit_tree *tree)
 	free(tree->tfm_workbuf);
 }
 
-void flatten_once(u32 n_orbit, orbiting *orbit, mat4 *tfm)
+void flatten_once(orbit_tree *tree)
 {
 	// skip first element, it does nothing
-	// iterate in reverse so it's like the orbit buffer is immutable
-	for (u32 i = n_orbit-1; i > 0; i--) {
-		u32 parent = orbit[i].parent;
-		mat4 trans, rot;
-		glm_translate_make(trans, orbit[i].offset);
-		glm_rotate_make(rot, orbit[i].angle, orbit[i].axis);
-		mat4 acc;
-		mat4 *chain[] = { &tfm[parent], &trans, &rot };
-		glm_mat4_mulN(chain, ARRAY_SIZE(chain), acc);
-		glm_mat4_mul(acc, tfm[i], tfm[i]);
-		orbit[i] = orbit[parent];
+	// iterate in reverse so it's like the index buffer is immutable
+	for (u32 i = tree->n_orbit - 1; i > 0; i--) {
+		u32 index = tree->index[i];
+		orbiting *orbit = &tree->orbit_specs[index];
+		vec3 offset;
+		memcpy(offset, orbit->offset, sizeof offset);
+		glm_vec3_rotate(offset, orbit->angle, orbit->axis);
+		mat4 trans;
+		glm_translate_make(trans, offset);
+		glm_mat4_mul(trans, tree->tfm_workbuf[i], tree->tfm_workbuf[i]);
+		tree->index[i] = orbit->parent;
 	}
 }
 
 void flatten(orbit_tree *tree)
 {
 	mat4 identity = GLM_MAT4_IDENTITY_INIT;
-	memcpy(tree->orbit_workbuf, tree->orbit_specs, tree->n_orbit * sizeof(orbiting));
 	for (u32 i = 0; i < tree->n_orbit; i++) {
+		tree->index[i] = i;
 		memcpy(tree->tfm_workbuf[i], identity, sizeof identity);
 	}
 	for (u32 i = 0; i < tree->height; i++) {
-		flatten_once(tree->n_orbit, tree->orbit_workbuf, tree->tfm_workbuf);
+		flatten_once(tree);
 	}
 	for (u32 i = 0; i < tree->n_orbit; i++) {
 		float scale = tree->orbit_specs[i].scale;
