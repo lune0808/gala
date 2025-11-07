@@ -1277,7 +1277,7 @@ int main()
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
 	vulkan_image tex_image = image_upload(&ctx,
-		load_image("res/faces.png"), gqueue);
+		load_image("res/2k_venus_surface.jpg"), gqueue);
 	VkImageView tex_view = vulkan_image_view_create(&ctx, &tex_image,
 		VK_IMAGE_ASPECT_COLOR_BIT);
 	VkSampler sampler = sampler_create_or_crash(&ctx);

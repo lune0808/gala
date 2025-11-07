@@ -13,6 +13,6 @@ layout(binding = 1) uniform sampler2D tex;
 void main()
 {
 	vec4 color = vec4(texture(tex, vert_uv).rgb, 1.0);
-	frag_color = vec4(vert_uv, 0.0, 1.0);
+	frag_color = color;
 }
 
