@@ -1044,8 +1044,9 @@ void transforms_upload(void *to, float width, float height, float time)
 
 typedef struct {
 	mat4 tfm;
-	versor orientation;
-	vec3 neg_pos;
+	float flat_angle;
+	float azim_angle;
+	vec3 pos;
 	float aspect; // w/h
 	float fov_rad;
 	float near;
@@ -1054,22 +1055,27 @@ typedef struct {
 
 void camera_matrix(camera *cam)
 {
-	mat4 trans;
-	glm_translate_make(trans, cam->neg_pos);
-	mat4 orient;
-	glm_quat_mat4t(cam->orientation, orient);
+	vec3 in_front = {
+		cosf(cam->azim_angle) * sinf(cam->flat_angle),
+		cosf(cam->azim_angle) * cosf(cam->flat_angle),
+		sinf(cam->azim_angle)
+	};
+	glm_vec3_add(cam->pos, in_front, in_front);
+	mat4 view;
+	glm_lookat(cam->pos, in_front, (vec3){ 0.0f, 0.0f, 1.0f }, view);
 	mat4 proj;
 	glm_perspective(cam->fov_rad, cam->aspect, cam->near, cam->far, proj);
 	proj[1][1] *= -1.0f;
-	glm_mat4_mul(proj, orient, cam->tfm);
-	glm_mat4_mul(cam->tfm, trans, cam->tfm);
+	glm_mat4_mul(proj, view, cam->tfm);
 }
 
 void camera_axes(camera *cam, mat3 axes)
 {
-	mat4 orient;
-	glm_quat_mat4(cam->orientation, orient);
-	glm_mat4_pick3(orient, axes);
+	axes[2][0] = axes[2][1] = axes[1][2] = 0.0f;
+	axes[2][2] = 1.0f;
+	axes[1][0] = sinf(cam->flat_angle);
+	axes[1][1] = cosf(cam->flat_angle);
+	glm_vec3_cross(axes[1], axes[2], axes[0]);
 }
 
 camera camera_init(VkExtent2D range, vec3 pos, vec3 target, GLFWwindow *window)
@@ -1079,12 +1085,11 @@ camera camera_init(VkExtent2D range, vec3 pos, vec3 target, GLFWwindow *window)
 	cam.aspect = (float) range.width / (float) range.height;
 	cam.far = 10.0f;
 	cam.near = 0.1f;
-	glm_vec3_negate_to(pos, cam.neg_pos);
+	memcpy(cam.pos, pos, sizeof(vec3));
 	vec3 dir;
 	glm_vec3_sub(target, pos, dir);
-	glm_vec3_normalize(dir);
-	vec3 neg_z = { 0.0f, 0.0f, -1.0f };
-	glm_quat_from_vecs(neg_z, dir, cam.orientation);
+	cam.flat_angle = atan2f(-dir[0], dir[1]);
+	cam.azim_angle = atan2f(dir[2], glm_vec2_norm(dir));
 
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 	if (!glfwRawMouseMotionSupported())
@@ -1100,29 +1105,29 @@ void camera_update(camera *cam, context *ctx, float dt)
 	camera_axes(cam, axes);
 	GLFWwindow *window = ctx->window;
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-		glm_vec3_muladds(axes[0], +dt * speed, cam->neg_pos);
+		glm_vec3_muladds(axes[0], -dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-		glm_vec3_muladds(axes[0], -dt * speed, cam->neg_pos);
+		glm_vec3_muladds(axes[0], +dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-		glm_vec3_muladds(axes[2], -dt * speed, cam->neg_pos);
+		glm_vec3_muladds(axes[1], -dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-		glm_vec3_muladds(axes[2], +dt * speed, cam->neg_pos);
+		glm_vec3_muladds(axes[1], +dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
-		glm_vec3_muladds(axes[1], -dt * speed, cam->neg_pos);
+		glm_vec3_muladds(axes[2], +dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
-		glm_vec3_muladds(axes[1], +dt * speed, cam->neg_pos);
+		glm_vec3_muladds(axes[2], -dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
 	float rot_speed = 1.0f;
 	// dx/1 = tan(ax) = ax << 1
-	float dx = rot_speed * ctx->mouse.dx;
-	float dy = rot_speed * ctx->mouse.dy;
-	versor rx, ry;
-	glm_quat(rx, -dx, 0.0f, 0.0f, 1.0f);
-	glm_quat(ry, -dy, 1.0f, 0.0f, 0.0f);
-	glm_quat_mul(rx, cam->orientation, cam->orientation);
-	glm_quat_mul(ry, cam->orientation, cam->orientation);
-	glm_quat_normalize(cam->orientation);
+	float dx = +rot_speed * ctx->mouse.dx;
+	float dy = -rot_speed * ctx->mouse.dy;
+	cam->flat_angle = fmodf(cam->flat_angle + dx, (float) M_PI * 2.0f);
+	cam->azim_angle = CLAMP(
+		cam->azim_angle + dy,
+		(float) M_PI * -0.45f,
+		(float) M_PI * +0.45f
+	);
 }
 
 typedef struct {
