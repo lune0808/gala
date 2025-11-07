@@ -1211,6 +1211,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		glm_mat4_inv(pushc.model, pushc.normalmat);
 		glm_mat4_transpose(pushc.normalmat);
 		memcpy(pushc.normalmat[3], cam->pos, sizeof(vec3));
+		pushc.normalmat[3][3] = 0.02f;
 		vkCmdPushConstants(cbuf, pipe.layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof(pushc), &pushc);

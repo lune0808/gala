@@ -7,7 +7,9 @@
 
 struct push_constant_data {
 	mat4 mvp;
-	mat4 normalmat; // row 3.xyz = camera position
+	// row 3.xyz = camera position
+	// row 3.w = ambient
+	mat4 normalmat;
 	mat4 model;
 };
 

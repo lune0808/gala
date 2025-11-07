@@ -22,8 +22,8 @@ void main()
 	vec3 source = draw.normalmat[3].xyz;
 	vec3 normal = normalize(vert_normal);
 	vec3 to_light = normalize(source - vert_world_pos);
-	float diffuse_scale = pow(max(0.0, dot(to_light, normal)), 8.0);
-	vec3 diffuse = diffuse_scale * color;
-	frag_color = vec4(diffuse, 1.0);
+	float diffuse = pow(max(0.0, dot(to_light, normal)), 8.0);
+	float ambient = draw.normalmat[3].w;
+	frag_color = vec4((ambient + diffuse) * color, 1.0);
 }
 
