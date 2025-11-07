@@ -1114,15 +1114,14 @@ void camera_update(camera *cam, context *ctx, float dt)
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
 	float rot_speed = 1.0f;
-	float dx = +rot_speed * ctx->mouse.dx;
-	float dy = -rot_speed * ctx->mouse.dy;
-	vec3 y = { 0.0f, 1.0f, 0.0f };
-	vec3 new_y;
-	glm_vec3_add(y, (vec3){ dx, 0.0f, dy }, new_y);
-	glm_vec3_normalize(new_y);
-	versor rot;
-	glm_quat_from_vecs(y, new_y, rot);
-	glm_quat_mul(rot, cam->orientation, cam->orientation);
+	// dx/1 = tan(ax) = ax << 1
+	float dx = rot_speed * ctx->mouse.dx;
+	float dy = rot_speed * ctx->mouse.dy;
+	versor rx, ry;
+	glm_quat(rx, -dx, 0.0f, 0.0f, 1.0f);
+	glm_quat(ry, -dy, 1.0f, 0.0f, 0.0f);
+	glm_quat_mul(rx, cam->orientation, cam->orientation);
+	glm_quat_mul(ry, cam->orientation, cam->orientation);
 	glm_quat_normalize(cam->orientation);
 }
 
