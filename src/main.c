@@ -391,7 +391,7 @@ mesh uv_sphere(u32 nx, u32 ny, float r)
 {
 	u32 nvert_quads = (nx + 1) * ny;
 	u32 nvert = nvert_quads + 2 * nx;
-	u32 nindx = 6 * nvert_quads + 2 * 3 * nx;
+	u32 nindx = 6 * nx * (ny - 1) + 2 * 3 * nx;
 	char *mem = xmalloc(nvert * sizeof(vertex) + nindx * sizeof(u32));
 	vertex *vert = (void*) mem;
 	vertex *vcur = vert;
@@ -399,7 +399,7 @@ mesh uv_sphere(u32 nx, u32 ny, float r)
 		float angley = (float) M_PI * (float) (iy + 1) / (float) (ny + 1);
 		float rsiny = r * sinf(angley);
 		float rcosy = r * cosf(angley);
-		float iy_ny = (float) iy / (float) ny;
+		float iy_ny = (float) (iy + 1) / (float) (ny + 1);
 		for (u32 ix = 0; ix <= nx; ix++) {
 			float anglex = 2.0f * (float) M_PI * (float) ix / (float) nx;
 			vcur->position[0] = rsiny * cosf(anglex);
@@ -428,16 +428,17 @@ mesh uv_sphere(u32 nx, u32 ny, float r)
 	u32 *indx = (void*) (mem + nvert * sizeof(vertex));
 	u32 *icur = indx;
 	u32 ivert = 0;
-	for (u32 irow = 0; irow < ny; irow++) {
+	for (u32 irow = 0; irow < ny - 1; irow++) {
 		for (u32 icol = 0; icol < nx; icol++) {
 			*icur++ = ivert;
-			*icur++ = ivert + nx;
 			*icur++ = ivert + nx + 1;
+			*icur++ = ivert + nx + 2;
 			*icur++ = ivert;
-			*icur++ = ivert + nx + 1;
+			*icur++ = ivert + nx + 2;
 			*icur++ = ivert + 1;
 			ivert++;
 		}
+		ivert++;
 	}
 	for (u32 ipole = 0; ipole < nx; ipole++) {
 		*icur++ = nvert_quads + ipole;
