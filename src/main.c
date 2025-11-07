@@ -943,10 +943,12 @@ void sync_create_or_crash(VkDevice logical, u32 cnt,
 }
 
 typedef struct {
-	vec3 offset; // initial position & phase
-	float scale; // world scale
-	vec3 axis;   // orbiting axis
-	float speed; // running orbit angle
+	vec3 offset;      // initial position & phase
+	float scale;      // world scale
+	vec3 axis;        // orbiting axis
+	float speed;      // running orbit speed
+	vec3 self_axis;   // self rotation axis
+	float self_speed; // self rotation speed
 	u32 parent;
 } orbiting;
 
@@ -966,14 +968,14 @@ orbit_tree orbit_tree_init()
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
-	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
-	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 1.0f, 0 };
-	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 2.0f, 0 };
-	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 3.0f, 2 };
-	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 4.0f, 3 };
-	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 5.0f, 4 };
-	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f}, 6.0f, 2 };
-	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 7.0f, 2 };
+	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 1.0f, {1.0f, 0.0f, 4.0f}, 2.0f, 0 };
+	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 2.0f, {0.9f, 0.0f, 2.0f}, 3.3f, 0 };
+	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 3.0f, {0.2f, 0.0f, 9.0f}, 0.8f, 2 };
+	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 4.0f, {0.1f, 0.6f, 0.0f}, 1.0f, 3 };
+	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 5.0f, {1.0f, 0.0f, 0.0f}, 7.1f, 4 };
+	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f}, 6.0f, {1.0f, 1.0f, 1.0f}, 0.0f, 2 };
+	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 7.0f, {1.0f, 0.0f, 0.0f}, 0.6f, 2 };
 	return (orbit_tree){ 4, n_orbit, worldpos, orbit_specs, parent };
 }
 
@@ -1008,10 +1010,12 @@ void flatten(orbit_tree *tree, float time)
 	}
 }
 
-void orbit_tree_index(orbit_tree *tree, u32 i, mat4 dest)
+void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
 {
-	float scale = tree->orbit_specs[i].scale;
-	glm_scale_make(dest, (vec3){ scale, scale, scale });
+	orbiting *orbit = &tree->orbit_specs[i];
+	glm_rotate_make(dest, orbit->self_speed * time, orbit->self_axis);
+	float scale = orbit->scale;
+	glm_scale(dest, (vec3){ scale, scale, scale });
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
 }
 
@@ -1082,10 +1086,11 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	camera_matrix((float) swap->base.dim.width,
 		      (float) swap->base.dim.height,
 		      viewproj);
-	flatten(tree, (float) glfwGetTime());
+	float now = (float) glfwGetTime();
+	flatten(tree, now);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
-		orbit_tree_index(tree, draw, pushc.pos_tfm);
+		orbit_tree_index(tree, draw, now, pushc.pos_tfm);
 		glm_mat4_mul(viewproj, pushc.pos_tfm, pushc.pos_tfm);
 		// normal matrix
 		glm_mat4_inv(pushc.pos_tfm, pushc.norm_tfm);
