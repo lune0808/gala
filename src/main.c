@@ -994,6 +994,7 @@ typedef struct {
 	float speed;      // running orbit speed
 	vec3 self_axis;   // self rotation axis
 	float self_speed; // self rotation speed
+	vec3 exponents;   // rgb exponents
 	u32 parent;
 } orbiting;
 
@@ -1013,14 +1014,14 @@ orbit_tree orbit_tree_init()
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
-	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
-	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 1.0f, {1.0f, 0.0f, 4.0f}, 2.0f, 0 };
-	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 2.0f, {0.9f, 0.0f, 2.0f}, 3.3f, 0 };
-	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 3.0f, {0.2f, 0.0f, 9.0f}, 0.8f, 2 };
-	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 4.0f, {0.1f, 0.6f, 0.0f}, 1.0f, 3 };
-	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 5.0f, {1.0f, 0.0f, 0.0f}, 7.1f, 4 };
-	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f},-6.0f, {1.0f, 1.0f, 1.0f}, 0.0f, 2 };
-	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 7.0f, {1.0f, 0.0f, 0.0f}, 0.6f, 2 };
+	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0 };
+	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 1.0f, {1.0f, 0.0f, 4.0f}, 2.0f, {1.4f, 1.0f, 1.0f}, 0 };
+	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 2.0f, {0.9f, 0.0f, 2.0f}, 3.3f, {1.0f, 1.4f, 1.0f}, 0 };
+	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 3.0f, {0.2f, 0.0f, 9.0f}, 0.8f, {1.0f, 1.0f, 1.4f}, 2 };
+	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 4.0f, {0.1f, 0.6f, 0.0f}, 1.0f, {1.4f, 1.4f, 1.0f}, 3 };
+	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 5.0f, {1.0f, 0.0f, 0.0f}, 7.1f, {1.0f, 1.4f, 1.4f}, 4 };
+	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f},-6.0f, {1.0f, 1.0f, 1.0f}, 0.0f, {1.4f, 1.0f, 1.4f}, 2 };
+	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 7.0f, {1.0f, 0.0f, 0.0f}, 0.6f, {1.4f, 1.4f, 1.4f}, 2 };
 	return (orbit_tree){ 4, n_orbit, worldpos, orbit_specs, parent };
 }
 
@@ -1212,6 +1213,9 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		glm_mat4_transpose(pushc.normalmat);
 		memcpy(pushc.normalmat[3], cam->pos, sizeof(vec3));
 		pushc.normalmat[3][3] = 0.02f;
+		pushc.normalmat[0][3] = tree->orbit_specs[draw].exponents[0];
+		pushc.normalmat[1][3] = tree->orbit_specs[draw].exponents[1];
+		pushc.normalmat[2][3] = tree->orbit_specs[draw].exponents[2];
 		vkCmdPushConstants(cbuf, pipe.layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof(pushc), &pushc);

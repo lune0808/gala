@@ -18,12 +18,17 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
+	mat4 nmat = draw.normalmat;
+	float pr = nmat[0].w;
+	float pg = nmat[1].w;
+	float pb = nmat[2].w;
 	vec3 color = texture(tex, vert_uv).rgb;
-	vec3 source = draw.normalmat[3].xyz;
+	color = vec3(pow(color.r, pr), pow(color.g, pg), pow(color.b, pb));
+	vec3 source = nmat[3].xyz;
 	vec3 normal = normalize(vert_normal);
 	vec3 to_light = normalize(source - vert_world_pos);
 	float diffuse = pow(max(0.0, dot(to_light, normal)), 8.0);
-	float ambient = draw.normalmat[3].w;
+	float ambient = nmat[3].w;
 	frag_color = vec4((ambient + diffuse) * color, 1.0);
 }
 
