@@ -380,7 +380,7 @@ typedef struct {
 	vec2 uv;
 } vertex;
 
-static const vertex vertices[] = {
+__attribute__((unused)) static const vertex vertices[] = {
 	[ 0] = { { -0.5f, +0.5f, -0.5f }, {0.0f, 0.0f, 0.0f}, {0.50f, 0.25f} },
 	[ 1] = { { +0.5f, +0.5f, -0.5f }, {0.0f, 0.0f, 0.0f}, {0.75f, 0.25f} },
 	[ 2] = { { +0.5f, -0.5f, -0.5f }, {0.0f, 0.0f, 0.0f}, {0.75f, 0.50f} },
@@ -397,7 +397,7 @@ static const vertex vertices[] = {
 	[13] = { { +0.5f, +0.5f, +0.5f }, {0.0f, 0.0f, 0.0f}, {0.00f, 0.25f} },
 };
 
-static const u32 indices[] = {
+__attribute__((unused)) static const u32 indices[] = {
 	0, 1, 2,
 	0, 2, 3,
 	2, 1, 9,
@@ -411,6 +411,81 @@ static const u32 indices[] = {
 	13,10,11,
 	13,11,12,
 };
+
+typedef struct {
+	vertex *vert;
+	u32 *indx;
+	u32 nvert;
+	u32 nindx;
+} mesh;
+
+mesh uv_sphere(u32 nx, u32 ny, float r)
+{
+	u32 nvert_quads = (nx + 1) * ny;
+	u32 nvert = nvert_quads + 2 * nx;
+	u32 nindx = 6 * nvert_quads + 2 * 3 * nx;
+	char *mem = xmalloc(nvert * sizeof(vertex) + nindx * sizeof(u32));
+	vertex *vert = (void*) mem;
+	vertex *vcur = vert;
+	for (u32 iy = 0; iy < ny; iy++) {
+		float angley = (float) M_PI * (float) (iy + 1) / (float) (ny + 1);
+		float rsiny = r * sinf(angley);
+		float rcosy = r * cosf(angley);
+		float iy_ny = (float) iy / (float) ny;
+		for (u32 ix = 0; ix <= nx; ix++) {
+			float anglex = 2.0f * (float) M_PI * (float) ix / (float) nx;
+			vcur->position[0] = rsiny * cosf(anglex);
+			vcur->position[1] = rsiny * sinf(anglex);
+			vcur->position[2] = rcosy;
+			vcur->uv[0] = (float) ix / (float) nx;
+			vcur->uv[1] = iy_ny;
+			vcur++;
+		}
+	}
+	for (u32 ipole = 0; ipole < nx; ipole++) {
+		vert[nvert_quads + ipole].position[0] = 0.0f;
+		vert[nvert_quads + ipole].position[1] = 0.0f;
+		vert[nvert_quads + ipole].position[2] = r;
+		vert[nvert_quads + ipole].uv[0] = ((float) ipole + 0.5f) / (float) nx;
+		vert[nvert_quads + ipole].uv[1] = 0.0f;
+		vert[nvert_quads + ipole + nx].position[0] = 0.0f;
+		vert[nvert_quads + ipole + nx].position[1] = 0.0f;
+		vert[nvert_quads + ipole + nx].position[2] = -r;
+		vert[nvert_quads + ipole + nx].uv[0] = ((float) ipole + 0.5f) / (float) nx;
+		vert[nvert_quads + ipole + nx].uv[1] = 1.0f;
+	}
+	for (vcur = vert; vcur != vert + nvert; vcur++) {
+		glm_normalize_to(vcur->position, vcur->normal);
+	}
+	u32 *indx = (void*) (mem + nvert * sizeof(vertex));
+	u32 *icur = indx;
+	u32 ivert = 0;
+	for (u32 irow = 0; irow < ny; irow++) {
+		for (u32 icol = 0; icol < nx; icol++) {
+			*icur++ = ivert;
+			*icur++ = ivert + nx;
+			*icur++ = ivert + nx + 1;
+			*icur++ = ivert;
+			*icur++ = ivert + nx + 1;
+			*icur++ = ivert + 1;
+			ivert++;
+		}
+	}
+	for (u32 ipole = 0; ipole < nx; ipole++) {
+		*icur++ = nvert_quads + ipole;
+		*icur++ = ipole;
+		*icur++ = ipole + 1;
+		*icur++ = nvert_quads + ipole + nx;
+		*icur++ = nvert_quads - nx + ipole;
+		*icur++ = nvert_quads - nx + ipole - 1;
+	}
+	return (mesh){ vert, indx, nvert, nindx };
+}
+
+void mesh_fini(mesh *m)
+{
+	free(m->vert);
+}
 
 pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
@@ -1240,11 +1315,12 @@ int main()
 	VkSampler sampler = sampler_create_or_crash(&ctx);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, tex_view, sampler);
+	mesh m = uv_sphere(16, 12, 0.5f);
 	vulkan_buffer vbuf = data_upload(&ctx,
-		sizeof vertices, vertices, gqueue,
+		m.nvert * sizeof(vertex), m.vert, gqueue,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	vulkan_buffer ibuf = data_upload(&ctx,
-		sizeof indices, indices, gqueue,
+		m.nindx * sizeof(u32), m.indx, gqueue,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	VkCommandPool pool = command_pool_create_or_crash(ctx.device,
 		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -1287,6 +1363,7 @@ int main()
 	vkDestroyBuffer(ctx.device, ibuf.buf, NULL);
 	vkFreeMemory(ctx.device, vbuf.mem, NULL);
 	vkDestroyBuffer(ctx.device, vbuf.buf, NULL);
+	mesh_fini(&m);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroySampler(ctx.device, sampler, NULL);
