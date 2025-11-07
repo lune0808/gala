@@ -953,7 +953,7 @@ typedef struct {
 typedef struct {
 	u32 height;
 	u32 n_orbit;
-	mat4 *tfm_workbuf;
+	vec4 *worldpos;
 	orbiting *orbit_specs;
 	u32 *index;
 } orbit_tree;
@@ -962,10 +962,10 @@ orbit_tree orbit_tree_init()
 {
 	u32 n_orbit = 1
 		    + 7;
-	char *mem = xmalloc(n_orbit * (sizeof(mat4) + 2 * sizeof(orbiting)));
-	mat4 *tfm_workbuf = (void*) mem;
-	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(mat4));
-	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(mat4)));
+	char *mem = xmalloc(n_orbit * (sizeof(vec4) + sizeof(orbiting) + sizeof(u32)));
+	vec4 *worldpos = (void*) mem;
+	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
+	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
 	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
 	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
 	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 0.0f, 0 };
@@ -974,45 +974,45 @@ orbit_tree orbit_tree_init()
 	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 0.0f, 4 };
 	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
 	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 0.0f, 2 };
-	return (orbit_tree){ 4, n_orbit, tfm_workbuf, orbit_specs, parent };
+	return (orbit_tree){ 4, n_orbit, worldpos, orbit_specs, parent };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
 {
-	free(tree->tfm_workbuf);
+	free(tree->worldpos);
 }
 
 void flatten_once(orbit_tree *tree)
 {
 	// skip first element, it does nothing
-	// iterate in reverse so it's like the index buffer is immutable
+	// iterate in reverse so it's like the buffers are immutable
 	for (u32 i = tree->n_orbit - 1; i > 0; i--) {
 		u32 index = tree->index[i];
 		orbiting *orbit = &tree->orbit_specs[index];
 		vec3 offset;
 		memcpy(offset, orbit->offset, sizeof offset);
 		glm_vec3_rotate(offset, orbit->angle, orbit->axis);
-		mat4 trans;
-		glm_translate_make(trans, offset);
-		glm_mat4_mul(trans, tree->tfm_workbuf[i], tree->tfm_workbuf[i]);
+		glm_vec3_add(offset, tree->worldpos[i], tree->worldpos[i]);
 		tree->index[i] = orbit->parent;
 	}
 }
 
 void flatten(orbit_tree *tree)
 {
-	mat4 identity = GLM_MAT4_IDENTITY_INIT;
+	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
 	for (u32 i = 0; i < tree->n_orbit; i++) {
 		tree->index[i] = i;
-		memcpy(tree->tfm_workbuf[i], identity, sizeof identity);
 	}
 	for (u32 i = 0; i < tree->height; i++) {
 		flatten_once(tree);
 	}
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		float scale = tree->orbit_specs[i].scale;
-		glm_scale(tree->tfm_workbuf[i], (vec3){ scale, scale, scale });
-	}
+}
+
+void orbit_tree_index(orbit_tree *tree, u32 i, mat4 dest)
+{
+	float scale = tree->orbit_specs[i].scale;
+	glm_scale_make(dest, (vec3){ scale, scale, scale });
+	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
 }
 
 void transforms_upload(void *to, float width, float height, float time)
@@ -1091,7 +1091,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		      viewproj);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
-		memcpy(&pushc.pos_tfm, &tree->tfm_workbuf[draw], sizeof(mat4));
+		orbit_tree_index(tree, draw, pushc.pos_tfm);
 		glm_mat4_mul(viewproj, pushc.pos_tfm, pushc.pos_tfm);
 		// normal matrix
 		glm_mat4_inv(pushc.pos_tfm, pushc.norm_tfm);
