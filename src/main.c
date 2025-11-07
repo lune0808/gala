@@ -1208,7 +1208,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		orbit_tree_index(tree, draw, now, pushc.model);
 		glm_mat4_mul(cam->tfm, pushc.model, pushc.mvp);
 		// normal matrix
-		glm_mat4_inv(pushc.mvp, pushc.normalmat);
+		glm_mat4_inv(pushc.model, pushc.normalmat);
 		glm_mat4_transpose(pushc.normalmat);
 		memcpy(pushc.normalmat[3], cam->pos, sizeof(vec3));
 		vkCmdPushConstants(cbuf, pipe.layout,
@@ -1317,7 +1317,7 @@ int main()
 			gqueue, &tree, &cam);
 		cpu_frame++;
 		double end_time = glfwGetTime();
-		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
+		// printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
