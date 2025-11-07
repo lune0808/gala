@@ -1065,6 +1065,13 @@ void camera_matrix(camera *cam)
 	glm_mat4_mul(cam->tfm, trans, cam->tfm);
 }
 
+void camera_axes(camera *cam, mat3 axes)
+{
+	mat4 orient;
+	glm_quat_mat4(cam->orientation, orient);
+	glm_mat4_pick3(orient, axes);
+}
+
 camera camera_init(VkExtent2D range, vec3 pos, vec3 target)
 {
 	camera cam;
@@ -1079,6 +1086,31 @@ camera camera_init(VkExtent2D range, vec3 pos, vec3 target)
 	vec3 neg_z = { 0.0f, 0.0f, -1.0f };
 	glm_quat_from_vecs(neg_z, dir, cam.orientation);
 	return cam;
+}
+
+void camera_update(camera *cam, GLFWwindow *window, float dt)
+{
+	float speed = 2.0f;
+	mat3 axes;
+	camera_axes(cam, axes);
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+		glm_vec3_muladds(axes[0], +dt * speed, cam->neg_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+		glm_vec3_muladds(axes[0], -dt * speed, cam->neg_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+		glm_vec3_muladds(axes[2], -dt * speed, cam->neg_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+		glm_vec3_muladds(axes[2], +dt * speed, cam->neg_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+		glm_vec3_muladds(axes[1], -dt * speed, cam->neg_pos);
+	}
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+		glm_vec3_muladds(axes[1], +dt * speed, cam->neg_pos);
+	}
 }
 
 typedef struct {
@@ -1209,15 +1241,18 @@ int main()
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -3.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f });
+	float dt = 0.0f;
 	while (!glfwWindowShouldClose(ctx.window)) {
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
+		camera_update(&cam, ctx.window, dt);
 		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
 			&sc, pipe, vbuf, ibuf,
 			gqueue, &tree, &cam);
 		cpu_frame++;
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
+		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
 	orbit_tree_fini(&tree);
