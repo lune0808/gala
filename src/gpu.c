@@ -308,9 +308,9 @@ context context_init(int width, int height, const char *title)
 		physical_device, window_surface);
 	VkPresentModeKHR present_mode = surface_present_mode(
 		physical_device, window_surface);
-	return (context){ window, vk_instance, window_surface,
-		physical_device, device, present_surface_fmt,
-		present_mode, specs };
+	return (context){ window, {1.0f / (float) width, 1.0f / (float) height,
+		0.0f, 0.0f, 0.0f, 0.0f}, vk_instance, window_surface,
+	       physical_device, device, present_surface_fmt, present_mode, specs };
 }
 
 void context_fini(context *ctx)
@@ -321,5 +321,30 @@ void context_fini(context *ctx)
 	vkDestroyInstance(ctx->vk_instance, NULL);
 	glfwDestroyWindow(ctx->window);
 	glfwTerminate();
+}
+
+static void poll_mouse(context *ctx)
+{
+	double x, y;
+	glfwGetCursorPos(ctx->window, &x, &y);
+	float xf = (float) x * ctx->mouse.inv_width;
+	float yf = (float) y * ctx->mouse.inv_height;
+	ctx->mouse.dx = xf - ctx->mouse.x;
+	ctx->mouse.dy = yf - ctx->mouse.y;
+	ctx->mouse.x = xf;
+	ctx->mouse.y = yf;
+}
+
+void context_ignore_mouse_once(context *ctx)
+{
+	poll_mouse(ctx);
+}
+
+bool context_keep(context *ctx)
+{
+	bool keep = !glfwWindowShouldClose(ctx->window);
+	glfwPollEvents();
+	poll_mouse(ctx);
+	return keep;
 }
 

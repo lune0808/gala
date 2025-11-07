@@ -1087,14 +1087,18 @@ camera camera_init(VkExtent2D range, vec3 pos, vec3 target, GLFWwindow *window)
 	glm_quat_from_vecs(neg_z, dir, cam.orientation);
 
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	if (!glfwRawMouseMotionSupported())
+		crash("raw mouse motion not available on the platform");
+	glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
 	return cam;
 }
 
-void camera_update(camera *cam, GLFWwindow *window, float dt)
+void camera_update(camera *cam, context *ctx, float dt)
 {
 	float speed = 2.0f;
 	mat3 axes;
 	camera_axes(cam, axes);
+	GLFWwindow *window = ctx->window;
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
 		glm_vec3_muladds(axes[0], +dt * speed, cam->neg_pos);
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
@@ -1109,6 +1113,17 @@ void camera_update(camera *cam, GLFWwindow *window, float dt)
 		glm_vec3_muladds(axes[1], +dt * speed, cam->neg_pos);
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, GLFW_TRUE);
+	float rot_speed = 1.0f;
+	float dx = +rot_speed * ctx->mouse.dx;
+	float dy = -rot_speed * ctx->mouse.dy;
+	vec3 y = { 0.0f, 1.0f, 0.0f };
+	vec3 new_y;
+	glm_vec3_add(y, (vec3){ dx, 0.0f, dy }, new_y);
+	glm_vec3_normalize(new_y);
+	versor rot;
+	glm_quat_from_vecs(y, new_y, rot);
+	glm_quat_mul(rot, cam->orientation, cam->orientation);
+	glm_quat_normalize(cam->orientation);
 }
 
 typedef struct {
@@ -1241,10 +1256,10 @@ int main()
 		(vec3){ 0.0f, 0.0f, 0.0f },
 		ctx.window);
 	float dt = 0.0f;
-	while (!glfwWindowShouldClose(ctx.window)) {
+	context_ignore_mouse_once(&ctx);
+	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
-		glfwPollEvents();
-		camera_update(&cam, ctx.window, dt);
+		camera_update(&cam, &ctx, dt);
 		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
 			&sc, pipe, vbuf, ibuf,
 			gqueue, &tree, &cam);
