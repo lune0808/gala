@@ -1061,7 +1061,20 @@ void camera_matrix(camera *cam)
 	mat4 proj;
 	glm_perspective(cam->fov_rad, cam->aspect, cam->near, cam->far, proj);
 	proj[1][1] *= -1.0f;
-	glm_mat4_mulN((mat4*[]){ &proj, &orient, &trans }, 3, cam->tfm);
+	glm_mat4_mul(proj, orient, cam->tfm);
+	glm_mat4_mul(cam->tfm, trans, cam->tfm);
+}
+
+camera camera_init(VkExtent2D range)
+{
+	camera cam;
+	cam.fov_rad = (float) M_PI / 4.0f;
+	cam.aspect = (float) range.width / (float) range.height;
+	cam.far = 10.0f;
+	cam.near = 0.1f;
+	glm_vec3_negate_to((vec3){ 0.0f, -3.0f, 0.0f }, cam.neg_pos);
+	glm_quat_from_vecs((vec3){ 0.0f, 1.0f, 0.0f }, (vec3){ 0.0f, 0.0f, 1.0f }, cam.orientation);
+	return cam;
 }
 
 typedef struct {
@@ -1071,7 +1084,8 @@ typedef struct {
 
 void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
-	vulkan_buffer ibuf, vulkan_queue gqueue, orbit_tree *tree)
+	vulkan_buffer ibuf, vulkan_queue gqueue, orbit_tree *tree,
+	camera *cam)
 {
 	// cpu wait for current frame to be done rendering
 	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
@@ -1088,23 +1102,13 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
 	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
 	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
-	camera cam;
-	cam.fov_rad = (float) M_PI / 4.0f;
-	cam.aspect = (float) swap->base.dim.width / (float) swap->base.dim.height;
-	cam.far = 10.0f;
-	cam.near = 0.1f;
-	glm_vec3_negate_to((vec3){ 0.0f, -3.0f, 0.0f }, cam.neg_pos);
-	glm_quat_identity(cam.orientation);
-	glm_quat_from_vecs((vec3){ 0.0f, 1.0f, 0.0f }, (vec3){ 0.0f, 0.0f, 1.0f }, cam.orientation);
-	camera_matrix(&cam);
-	mat4 viewproj;
-	memcpy(viewproj, cam.tfm, sizeof(mat4));
+	camera_matrix(cam);
 	float now = (float) glfwGetTime();
 	flatten(tree, now);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
 		orbit_tree_index(tree, draw, now, pushc.pos_tfm);
-		glm_mat4_mul(viewproj, pushc.pos_tfm, pushc.pos_tfm);
+		glm_mat4_mul(cam->tfm, pushc.pos_tfm, pushc.pos_tfm);
 		// normal matrix
 		glm_mat4_inv(pushc.pos_tfm, pushc.norm_tfm);
 		glm_mat4_transpose(pushc.norm_tfm);
@@ -1198,12 +1202,13 @@ int main()
 
 	u32 cpu_frame = 0;
 	orbit_tree tree = orbit_tree_init();
+	camera cam = camera_init(sc.base.dim);
 	while (!glfwWindowShouldClose(ctx.window)) {
 		double beg_time = glfwGetTime();
 		glfwPollEvents();
 		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
 			&sc, pipe, vbuf, ibuf,
-			gqueue, &tree);
+			gqueue, &tree, &cam);
 		cpu_frame++;
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
