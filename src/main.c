@@ -524,12 +524,12 @@ orbit_tree orbit_tree_init(u32 cnt)
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
 		rand_vec3_shell(0.49f * PI, 0.51f * PI, 2.0f, 12.0f, o->offset);
-		o->scale = rand_float(1.0f/16.0f, 1.0f/4.0f);
+		o->scale = rand_float(1.0f/32.0f, 1.0f/4.0f);
 		rand_vec3_dir(0.0f, 1.0f/128.0f * PI, o->axis);
-		o->speed = rand_float(0.5f, 0.55f);
+		o->speed = rand_float(0.5f, 0.65f);
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
-		rand_vec3_shell(0.75f * PI, 0.25f * PI, 0.8f, 1.3f, o->exponents);
+		rand_vec3_shell(0.2f * PI, 0.3f * PI, 0.8f, 1.3f, o->exponents);
 		glm_vec3_abs(o->exponents, o->exponents);
 		o->parent = 1;
 	}
@@ -772,8 +772,8 @@ VkSampler sampler_create(context *ctx)
 	return sm;
 }
 
-static const int WIDTH = 800;
-static const int HEIGHT = 600;
+static const int WIDTH = 1600;
+static const int HEIGHT = 900;
 
 int main()
 {
@@ -793,7 +793,7 @@ int main()
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
-	mesh m = uv_sphere(16, 12, 0.5f);
+	mesh m = uv_sphere(64, 48, 0.5f);
 	uploaded_mesh um = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
