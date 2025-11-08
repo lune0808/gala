@@ -136,6 +136,7 @@ static GLFWwindow *glfw_window(int width, int height, const char *title)
 
 static const char *const validation = "VK_LAYER_KHRONOS_validation";
 
+__attribute__((unused))
 static void vulkan_validation_layers()
 {
 	u32 n_lyr;
