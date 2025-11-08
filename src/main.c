@@ -116,7 +116,7 @@ bool format_has_stencil(VkFormat fmt)
 
 typedef struct {
 	vulkan_swapchain base;
-	vulkan_bound_image_view depth_buffer;
+	vulkan_bound_image depth_buffer;
 	VkRenderPass pass;
 	VkFramebuffer *framebuffer;
 } attached_swapchain;
@@ -144,7 +144,7 @@ VkFramebuffer *framebuf_attach(VkDevice logical, vulkan_swapchain *swap, VkRende
 	return framebuf;
 }
 
-vulkan_bound_image_view depth_buffer_create(context *ctx, VkExtent2D dims)
+vulkan_bound_image depth_buffer_create(context *ctx, VkExtent2D dims)
 {
 	VkFormat candidates[] = {
 		VK_FORMAT_D32_SFLOAT,
@@ -168,16 +168,16 @@ vulkan_bound_image_view depth_buffer_create(context *ctx, VkExtent2D dims)
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-	return vulkan_bound_image_view_create(ctx, &desc,
+	return vulkan_bound_image_create(ctx, &desc,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
 attached_swapchain attached_swapchain_create(context *ctx)
 {
 	vulkan_swapchain base = vulkan_swapchain_create(ctx);
-	vulkan_bound_image_view depth_buffer = depth_buffer_create(ctx, base.dim);
+	vulkan_bound_image depth_buffer = depth_buffer_create(ctx, base.dim);
 	VkRenderPass pass = render_pass_create(ctx->device,
-		base.fmt, depth_buffer.img.fmt);
+		base.fmt, depth_buffer.fmt);
 	VkFramebuffer *framebuffer = framebuf_attach(ctx->device,
 		&base, pass, depth_buffer.view);
 	return (attached_swapchain){ base, depth_buffer, pass, framebuffer };
@@ -189,7 +189,7 @@ void attached_swapchain_destroy(context *ctx, attached_swapchain *sc)
 		vkDestroyFramebuffer(ctx->device, sc->framebuffer[i], NULL);
 	}
 	vkDestroyRenderPass(ctx->device, sc->pass, NULL);
-	vulkan_bound_image_view_destroy(ctx, &sc->depth_buffer);
+	vulkan_bound_image_destroy(ctx, &sc->depth_buffer);
 	vulkan_swapchain_destroy(ctx, &sc->base);
 }
 
@@ -726,7 +726,7 @@ vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
 	return uploaded;
 }
 
-void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img,
+void image_layout_transition(VkCommandBuffer cmd, vulkan_bound_image *img,
 	VkImageLayout prev, VkImageLayout next)
 {
 	VkImageMemoryBarrier barrier = {
@@ -740,7 +740,7 @@ void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img,
 		.subresourceRange.baseMipLevel = 0,
 		.subresourceRange.levelCount = img->mips,
 		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = n_img,
+		.subresourceRange.layerCount = img->n_img,
 	};
 	VkPipelineStageFlags rel_stg, acq_stg;
 	if (prev == VK_IMAGE_LAYOUT_UNDEFINED) {
@@ -766,8 +766,7 @@ void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img,
 		0, NULL, 0, NULL, 1, &barrier);
 }
 
-void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image *img,
-	u32 width, u32 height, u32 n_img)
+void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_bound_image *img)
 {
 	VkBufferImageCopy region = {
 		.bufferOffset = 0,
@@ -776,14 +775,14 @@ void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image *img,
 		.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.imageSubresource.mipLevel = 0,
 		.imageSubresource.baseArrayLayer = 0,
-		.imageSubresource.layerCount = n_img,
+		.imageSubresource.layerCount = img->n_img,
 		.imageOffset = {0, 0, 0},
-		.imageExtent = {width, height, 1},
+		.imageExtent = {img->dim.width, img->dim.height, 1},
 	};
 	vkCmdCopyBufferToImage(cmd, buf.buf, img->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 }
 
-void image_mips_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img)
+void image_mips_transition(VkCommandBuffer cmd, vulkan_bound_image *img)
 {
 	VkImageMemoryBarrier barrier = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -792,18 +791,18 @@ void image_mips_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img)
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = n_img,
+		.subresourceRange.layerCount = img->n_img,
 		.subresourceRange.levelCount = 1,
 	};
 	VkImageBlit blit_desc = {
 		.srcOffsets[0] = { 0, 0, 0 },
 		.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.srcSubresource.baseArrayLayer = 0,
-		.srcSubresource.layerCount = n_img,
+		.srcSubresource.layerCount = img->n_img,
 		.dstOffsets[0] = { 0, 0, 0 },
 		.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.dstSubresource.baseArrayLayer = 0,
-		.dstSubresource.layerCount = n_img,
+		.dstSubresource.layerCount = img->n_img,
 	};
 	i32 mip_w = (i32) img->dim.width;
 	i32 mip_h = (i32) img->dim.height;
@@ -853,15 +852,12 @@ void image_mips_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img)
 	);
 }
 
-typedef struct {
-	vulkan_image img;
-	u32 n_img;
-} vulkan_image_array;
-
-vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
+vulkan_bound_image images_upload(context *ctx, u32 n_img, loaded_image *img,
 	vulkan_queue xfer)
 {
-	VkDeviceSize img_size = img->width * img->height * 4ul;
+	u32 width = img->width;
+	u32 height = img->height;
+	VkDeviceSize img_size = width * height * 4ul;
 	VkDeviceSize size = img_size * (VkDeviceSize) n_img;
 	vulkan_buffer staging = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -870,8 +866,8 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 	void *mapped;
 	vkMapMemory(ctx->device, staging.mem, 0, size, 0, &mapped);
 	for (u32 i = 0; i < n_img; i++) {
-		assert(img[i].width  == img[0].width
-		    && img[i].height == img[0].height);
+		assert(img[i].width  == width
+		    && img[i].height == height);
 		memcpy((char*) mapped + i * img_size, img[i].mem, img_size);
 		loaded_image_fini(img[i]);
 	}
@@ -891,8 +887,9 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 	};
-	vulkan_image vimg = vulkan_image_create(ctx, &vimg_desc,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	vulkan_bound_image vimg = vulkan_bound_image_create(ctx,
+		&vimg_desc, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+		VK_IMAGE_ASPECT_COLOR_BIT);
 	VkCommandPool pool = command_pool_create(ctx->device,
 		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
@@ -902,15 +899,17 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	};
 	vkBeginCommandBuffer(cmd, &cmd_begin);
-	image_layout_transition(cmd, &vimg, n_img,
-		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	image_layout_transition(cmd, &vimg,
+		VK_IMAGE_LAYOUT_UNDEFINED,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	VkFormatProperties props;
-	vkGetPhysicalDeviceFormatProperties(ctx->physical_device, vimg.fmt, &props);
-	if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+	vkGetPhysicalDeviceFormatProperties(
+		ctx->physical_device, vimg.fmt, &props);
+	if (!(props.optimalTilingFeatures
+	    & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 		crash("vkCmdBlitImage not available for mipmap generation");
-	image_transfer(cmd, staging, &vimg,
-		img->width, img->height, n_img);
-	image_mips_transition(cmd, &vimg, n_img);
+	image_transfer(cmd, staging, &vimg);
+	image_mips_transition(cmd, &vimg);
 	vkEndCommandBuffer(cmd);
 	VkSubmitInfo submission = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -922,7 +921,7 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 	vkDestroyBuffer(ctx->device, staging.buf, NULL);
 	vkFreeMemory(ctx->device, staging.mem, NULL);
 	vkDestroyCommandPool(ctx->device, pool, NULL);
-	return (vulkan_image_array){ vimg, n_img };
+	return vimg;
 }
 
 void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
@@ -1263,16 +1262,14 @@ int main()
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
-	vulkan_image_array tex_image = images_upload(&ctx,
+	vulkan_bound_image textures = images_upload(&ctx,
 		2, (loaded_image[]){
 			load_image("res/2k_venus_surface.jpg"),
 			load_image("res/2k_mercury.jpg"),
 		}, gqueue);
-	VkImageView tex_view = vulkan_image_view_create(&ctx, &tex_image.img, 2,
-		VK_IMAGE_ASPECT_COLOR_BIT);
 	VkSampler sampler = sampler_create(&ctx);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, tex_view, sampler);
+		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
 	mesh m = uv_sphere(16, 12, 0.5f);
 	vulkan_buffer vbuf = data_upload(&ctx,
 		m.nvert * sizeof(vertex), m.vert, gqueue,
@@ -1325,8 +1322,7 @@ int main()
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroySampler(ctx.device, sampler, NULL);
-	vulkan_image_view_destroy(&ctx, tex_view);
-	vulkan_image_destroy(&ctx, &tex_image.img);
+	vulkan_bound_image_destroy(&ctx, &textures);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
 	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
 	attached_swapchain_destroy(&ctx, &sc);
