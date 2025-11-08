@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include "lifetime.h"
 #include "util.h"
+#include "sync.h"
 
 
 static void buffer_fit(void **mem, u32 size, u32 *cap)
@@ -21,8 +22,6 @@ lifetime lifetime_init(context *ctx, hw_queue q,
 		l.cmd = (void*) mem;
 		l.wait = (void*) (mem + n_cmd * sizeof(VkCommandBuffer));
 		command_buffer_create(ctx->device, l.pool, n_cmd, l.cmd);
-		extern void cpu_fence_create(VkDevice device, u32 cnt, VkFence *fence,
-				VkFenceCreateFlags flags);
 		cpu_fence_create(ctx->device, n_cmd, l.wait,
 				VK_FENCE_CREATE_SIGNALED_BIT);
 	}
@@ -46,21 +45,28 @@ lifetime lifetime_init(context *ctx, hw_queue q,
 
 void lifetime_fini(lifetime *l, context *ctx)
 {
-	for (u32 i = 0; i < l->n_cmd; i++) {
-		u32 icmd = lifetime_acquire(l, ctx);
-		vkDestroyFence(ctx->device, l->wait[icmd], NULL);
+	if (l->n_cmd > 0) {
+		cpu_fence_wait_all(ctx->device,
+			l->n_cmd, l->wait, UINT64_MAX);
 	}
+	for (u32 i = 0; i < l->n_cmd; i++) {
+		vkDestroyFence(ctx->device, l->wait[i], NULL);
+	}
+
 	for (u32 i = 0; i < l->n_buf; i++) {
 		vkDestroyBuffer(ctx->device, l->buf[i].handle, NULL);
 		vkFreeMemory(ctx->device, l->buf[i].mem, NULL);
 	}
+	free(l->buf);
 	for (u32 i = 0; i < l->n_img; i++) {
 		vulkan_bound_image_destroy(ctx, &l->img[i]);
 	}
+	free(l->img);
 	for (u32 i = 0; i < l->n_sm; i++) {
 		vkDestroySampler(ctx->device, l->sm[i], NULL);
 	}
-	free(l->buf);
+	free(l->sm);
+
 	if (l->n_cmd > 0) {
 		free(l->cmd);
 		vkDestroyCommandPool(ctx->device, l->pool, NULL);
@@ -70,11 +76,7 @@ void lifetime_fini(lifetime *l, context *ctx)
 u32 lifetime_acquire(lifetime *l, context *ctx)
 {
 	VkFence fence = l->wait[l->i_cmd];
-	if (vkWaitForFences(ctx->device,
-		1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS)
-		crash("vkWaitForFences");
-	if (vkResetFences(ctx->device, 1, &fence) != VK_SUCCESS)
-		crash("vkResetFences");
+	cpu_fence_wait_one(ctx->device, fence, UINT64_MAX);
 	VkCommandBuffer cmd = l->cmd[l->i_cmd];
 	vkResetCommandBuffer(cmd, 0);
 	u32 icmd = l->i_cmd;

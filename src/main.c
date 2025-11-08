@@ -18,6 +18,7 @@
 #include "memory.h"
 #include "hwqueue.h"
 #include "lifetime.h"
+#include "sync.h"
 
 VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
@@ -620,32 +621,6 @@ typedef struct {
 	VkFence rendering[MAX_FRAMES_RENDERING];
 } fences;
 
-void gpu_fence_create(VkDevice device, u32 cnt, VkSemaphore *sem)
-{
-	VkSemaphoreCreateInfo sem_desc = {
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-	};
-	for (u32 i = 0; i < cnt; i++) {
-		if (vkCreateSemaphore(device, &sem_desc,
-			NULL, &sem[i]) != VK_SUCCESS)
-			crash("vkCreateSemaphore");
-	}
-}
-
-void cpu_fence_create(VkDevice device, u32 cnt, VkFence *fence,
-	VkFenceCreateFlags flags)
-{
-	VkFenceCreateInfo fence_desc = {
-		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = flags,
-	};
-	for (u32 i = 0; i < cnt; i++) {
-		if (vkCreateFence(device, &fence_desc,
-			NULL, &fence[i]) != VK_SUCCESS)
-			crash("vkCreateSemaphore");
-	}
-}
-
 typedef struct {
 	vec3 offset;      // initial position & phase
 	float scale;      // world scale
@@ -839,8 +814,7 @@ void draw(context *ctx, draw_calls info, u32 upcoming_index,
 	camera *cam)
 {
 	// cpu wait for current frame to be done rendering
-	vkWaitForFences(ctx->device, 1, &info.sync.rendering[upcoming_index], VK_TRUE, UINT64_MAX);
-	vkResetFences(ctx->device, 1, &info.sync.rendering[upcoming_index]);
+	cpu_fence_wait_one(ctx->device, info.sync.rendering[upcoming_index], UINT64_MAX);
 	vkAcquireNextImageKHR(ctx->device, swap->base.handle, UINT64_MAX,
 		info.sync.present_ready[upcoming_index],
 		VK_NULL_HANDLE, &swap->base.i_slot);
