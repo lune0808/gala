@@ -736,12 +736,15 @@ uploaded_mesh mesh_upload(context *ctx, mesh m,
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	uploaded_mesh mesh, orbit_tree *tree, camera *cam,
-	vulkan_buffer instbuf, void *mapped)
+	vulkan_buffer instbuf, char *mapped)
 {
 	// render
 	float now = (float) glfwGetTime();
 	flatten(tree, now);
-	memcpy(mapped, tree->tfm, instbuf.size);
+	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
+	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
+	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
+	memcpy(mapped + next_index * inst_size, tree->tfm, tree->n_orbit * sizeof(mat4));
 	// cpu wait for current frame to be done rendering
 	attached_swapchain_swap_buffers(ctx, sc);
 	// recording commands for next frame
@@ -752,7 +755,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
 	VkBuffer buffers[] = { mesh.vert.handle, instbuf.handle };
-	VkDeviceSize offsets[] = { 0, 0 };
+	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
 	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
 	vkCmdBindIndexBuffer(cmd, mesh.indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	struct push_constant_data pushc;
@@ -843,7 +846,7 @@ int main()
 	context_ignore_mouse_once(&ctx);
 	lifetime_fini(&loading_lifetime, &ctx);
 	vulkan_buffer instbuf = buffer_create(&ctx,
-		tree.n_orbit * sizeof(mat4),
+		MAX_FRAMES_RENDERING * tree.n_orbit * sizeof(mat4),
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	void *mapped = buffer_map(&ctx, instbuf);
