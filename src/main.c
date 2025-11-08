@@ -17,6 +17,7 @@
 #include "image.h"
 #include "memory.h"
 #include "hwqueue.h"
+#include "lifetime.h"
 
 VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
@@ -619,26 +620,29 @@ typedef struct {
 	VkFence rendering[MAX_FRAMES_RENDERING];
 } fences;
 
-void sync_create(VkDevice logical, u32 cnt,
-	VkSemaphore *present_ready, VkSemaphore *render_done, VkFence *rendering)
+void gpu_fence_create(VkDevice device, u32 cnt, VkSemaphore *sem)
 {
 	VkSemaphoreCreateInfo sem_desc = {
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
 	};
+	for (u32 i = 0; i < cnt; i++) {
+		if (vkCreateSemaphore(device, &sem_desc,
+			NULL, &sem[i]) != VK_SUCCESS)
+			crash("vkCreateSemaphore");
+	}
+}
+
+void cpu_fence_create(VkDevice device, u32 cnt, VkFence *fence,
+	VkFenceCreateFlags flags)
+{
 	VkFenceCreateInfo fence_desc = {
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+		.flags = flags,
 	};
 	for (u32 i = 0; i < cnt; i++) {
-		if (vkCreateSemaphore(logical,
-			&sem_desc, NULL, &present_ready[i]) != VK_SUCCESS)
+		if (vkCreateFence(device, &fence_desc,
+			NULL, &fence[i]) != VK_SUCCESS)
 			crash("vkCreateSemaphore");
-		if (vkCreateSemaphore(logical,
-			&sem_desc, NULL, &render_done[i]) != VK_SUCCESS)
-			crash("vkCreateSemaphore");
-		if (vkCreateFence(logical,
-			&fence_desc, NULL, &rendering[i]) != VK_SUCCESS)
-			crash("vkCreateFence");
 	}
 }
 
@@ -924,27 +928,31 @@ int main()
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	hw_queue gqueue = hw_queue_ref(&ctx, ctx.specs->iq_graphics);
+	lifetime loading_lifetime = lifetime_init(&ctx, gqueue,
+		VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
+		| VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, 1);
 	vulkan_bound_image textures = vulkan_bound_image_upload(&ctx,
 		2, (loaded_image[]){
 			load_image("res/2k_venus_surface.jpg"),
 			load_image("res/2k_mercury.jpg"),
-		}, gqueue);
+		}, &loading_lifetime);
 	VkSampler sampler = sampler_create(&ctx);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
 	mesh m = uv_sphere(16, 12, 0.5f);
 	vulkan_buffer vbuf = data_upload(&ctx,
-		m.nvert * sizeof(vertex), m.vert, gqueue,
+		m.nvert * sizeof(vertex), m.vert, &loading_lifetime,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	vulkan_buffer ibuf = data_upload(&ctx,
-		m.nindx * sizeof(u32), m.indx, gqueue,
+		m.nindx * sizeof(u32), m.indx, &loading_lifetime,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	VkCommandPool pool = command_pool_create(ctx.device,
 		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
         command_buffer_create(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
-	sync_create(ctx.device, MAX_FRAMES_RENDERING,
-		draws.sync.present_ready, draws.sync.render_done, draws.sync.rendering);
+	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.present_ready);
+	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.render_done);
+	cpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.rendering, VK_FENCE_CREATE_SIGNALED_BIT);
 
 	u32 cpu_frame = 0;
 	orbit_tree tree = orbit_tree_init();
@@ -954,6 +962,7 @@ int main()
 		ctx.window);
 	float dt = 0.0f;
 	context_ignore_mouse_once(&ctx);
+	lifetime_fini(&loading_lifetime, &ctx);
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);

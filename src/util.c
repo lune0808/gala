@@ -17,7 +17,14 @@ void *xmalloc(size_t sz)
 {
 	void *p = malloc(sz);
 	if (!p)
-		crash("malloc");
+		crash("malloc %zu", sz);
 	return p;
 }
 
+void *xrealloc(void *ptr, size_t sz)
+{
+	void *p = realloc(ptr, sz);
+	if (!p)
+		crash("realloc %zu", sz);
+	return p;
+}

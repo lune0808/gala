@@ -1,6 +1,7 @@
 #include <string.h>
 #include "memory.h"
 #include "util.h"
+#include "lifetime.h"
 
 
 u32 constrain_memory_type(context *ctx, u32 allowed, VkMemoryPropertyFlags cons)
@@ -58,14 +59,11 @@ void buffer_unmap(context *ctx, vulkan_buffer buf)
 	vkUnmapMemory(ctx->device, buf.mem);
 }
 
-// TODO: yuck
-void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
-	hw_queue xfer)
+static void data_transfer(context *ctx, vulkan_buffer dst, vulkan_buffer src,
+	lifetime *l)
 {
-	VkCommandPool pool = command_pool_create(logical,
-		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
-	VkCommandBuffer cmd;
-	command_buffer_create(logical, pool, 1, &cmd);
+	u32 icmd = lifetime_acquire(l, ctx);
+	VkCommandBuffer cmd = l->cmd[icmd];
 	VkCommandBufferBeginInfo cmd_begin = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -78,19 +76,11 @@ void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 	};
 	vkCmdCopyBuffer(cmd, src.handle, dst.handle, 1, &copy_desc);
 	vkEndCommandBuffer(cmd);
-	VkSubmitInfo submission = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &cmd,
-	};
-	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
-	vkQueueWaitIdle(xfer.handle);
-	vkFreeCommandBuffers(logical, pool, 1, &cmd);
-	vkDestroyCommandPool(logical, pool, NULL);
+	lifetime_release(l, icmd);
 }
 
 vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
-	hw_queue xfer, VkBufferUsageFlags usage)
+	lifetime *l, VkBufferUsageFlags usage)
 {
 	vulkan_buffer staging = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -100,9 +90,8 @@ vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
 	vulkan_buffer uploaded = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|usage,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	data_transfer(ctx->device, uploaded, staging, xfer);
-	vkDestroyBuffer(ctx->device, staging.handle, NULL);
-	vkFreeMemory(ctx->device, staging.mem, NULL);
+	data_transfer(ctx, uploaded, staging, l);
+	lifetime_bind_buffer(l, staging);
 	return uploaded;
 }
 

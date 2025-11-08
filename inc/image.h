@@ -6,6 +6,7 @@
 #include "types.h"
 #include "gpu.h"
 #include "memory.h"
+#include "lifetime.h"
 
 typedef struct {
 	u32 width;
@@ -41,7 +42,7 @@ void vulkan_bound_image_transfer(VkCommandBuffer cmd,
 void vulkan_bound_image_mips_transition(VkCommandBuffer cmd,
 	vulkan_bound_image *img);
 vulkan_bound_image vulkan_bound_image_upload(context *ctx,
-	u32 n_img, loaded_image *img, hw_queue xfer);
+	u32 n_img, loaded_image *img, lifetime *l);
 
 #endif /* GALA_IMAGE_H */
 

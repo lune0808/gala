@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include "gpu.h"
 #include "hwqueue.h"
+typedef struct lifetime lifetime; // recursive include
 
 
 u32 constrain_memory_type(context *ctx, u32 allowed,
@@ -22,10 +23,8 @@ vulkan_buffer buffer_create(context *ctx,
 
 void *buffer_map(context *ctx, vulkan_buffer buf);
 void buffer_unmap(context *ctx, vulkan_buffer buf);
-void data_transfer(VkDevice logical,
-	vulkan_buffer dst, vulkan_buffer src, hw_queue xfer);
 vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
-	hw_queue xfer, VkBufferUsageFlags usage);
+	lifetime *l, VkBufferUsageFlags usage);
 
 #endif /* GALA_MEMORY_H */
 

@@ -216,8 +216,8 @@ void vulkan_bound_image_mips_transition(VkCommandBuffer cmd, vulkan_bound_image 
 		VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
-vulkan_bound_image vulkan_bound_image_upload(context *ctx, u32 n_img, loaded_image *img,
-	hw_queue xfer)
+vulkan_bound_image vulkan_bound_image_upload(context *ctx,
+	u32 n_img, loaded_image *img, lifetime *l)
 {
 	u32 width = img->width;
 	u32 height = img->height;
@@ -252,37 +252,27 @@ vulkan_bound_image vulkan_bound_image_upload(context *ctx, u32 n_img, loaded_ima
 	vulkan_bound_image vimg = vulkan_bound_image_create(ctx,
 		&vimg_desc, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 		VK_IMAGE_ASPECT_COLOR_BIT);
-	VkCommandPool pool = command_pool_create(ctx->device,
-		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
-	VkCommandBuffer cmd;
-	command_buffer_create(ctx->device, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	};
-	vkBeginCommandBuffer(cmd, &cmd_begin);
-	vulkan_bound_image_layout_transition(cmd, &vimg,
-		VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	VkFormatProperties props;
 	vkGetPhysicalDeviceFormatProperties(
 		ctx->physical_device, vimg.fmt, &props);
 	if (!(props.optimalTilingFeatures
 	    & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 		crash("vkCmdBlitImage not available for mipmap generation");
+	u32 icmd = lifetime_acquire(l, ctx);
+	VkCommandBuffer cmd = l->cmd[icmd];
+	vkBeginCommandBuffer(cmd, &cmd_begin);
+	vulkan_bound_image_layout_transition(cmd, &vimg,
+		VK_IMAGE_LAYOUT_UNDEFINED,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	vulkan_bound_image_transfer(cmd, staging, &vimg);
 	vulkan_bound_image_mips_transition(cmd, &vimg);
 	vkEndCommandBuffer(cmd);
-	VkSubmitInfo submission = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &cmd,
-	};
-	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
-	vkQueueWaitIdle(xfer.handle);
-	vkDestroyBuffer(ctx->device, staging.handle, NULL);
-	vkFreeMemory(ctx->device, staging.mem, NULL);
-	vkDestroyCommandPool(ctx->device, pool, NULL);
+	lifetime_release(l, icmd);
+	lifetime_bind_buffer(l, staging);
 	return vimg;
 }
 

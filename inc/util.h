@@ -14,6 +14,8 @@ __attribute__((noinline))
 noreturn void crash(const char *reason, ...);
 __attribute__((noinline))
 void *xmalloc(size_t sz);
+__attribute__((noinline))
+void *xrealloc(void *ptr, size_t sz);
 
 #endif /* GALA_UTIL_H */
 
