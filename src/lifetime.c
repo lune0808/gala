@@ -14,16 +14,18 @@ lifetime lifetime_init(context *ctx, hw_queue q,
 	VkCommandPoolCreateFlags flags, u32 n_cmd)
 {
 	lifetime l;
-	l.q = q;
-	l.pool = command_pool_create(ctx->device, q, flags);
-	char *mem = xmalloc(n_cmd * (sizeof(VkCommandBuffer) + sizeof(VkFence)));
-	l.cmd = (void*) mem;
-	l.wait = (void*) (mem + n_cmd * sizeof(VkCommandBuffer));
-	command_buffer_create(ctx->device, l.pool, n_cmd, l.cmd);
-	extern void cpu_fence_create(VkDevice device, u32 cnt, VkFence *fence,
-		VkFenceCreateFlags flags);
-	cpu_fence_create(ctx->device, n_cmd, l.wait,
-		VK_FENCE_CREATE_SIGNALED_BIT);
+	if (n_cmd > 0) {
+		l.q = q;
+		l.pool = command_pool_create(ctx->device, q, flags);
+		char *mem = xmalloc(n_cmd * (sizeof(VkCommandBuffer) + sizeof(VkFence)));
+		l.cmd = (void*) mem;
+		l.wait = (void*) (mem + n_cmd * sizeof(VkCommandBuffer));
+		command_buffer_create(ctx->device, l.pool, n_cmd, l.cmd);
+		extern void cpu_fence_create(VkDevice device, u32 cnt, VkFence *fence,
+				VkFenceCreateFlags flags);
+		cpu_fence_create(ctx->device, n_cmd, l.wait,
+				VK_FENCE_CREATE_SIGNALED_BIT);
+	}
 	l.n_cmd = n_cmd;
 	l.i_cmd = 0;
 
@@ -39,13 +41,15 @@ void lifetime_fini(lifetime *l, context *ctx)
 		u32 icmd = lifetime_acquire(l, ctx);
 		vkDestroyFence(ctx->device, l->wait[icmd], NULL);
 	}
-	free(l->cmd);
 	for (u32 i = 0; i < l->n_buf; i++) {
 		vkDestroyBuffer(ctx->device, l->buf[i].handle, NULL);
 		vkFreeMemory(ctx->device, l->buf[i].mem, NULL);
 	}
 	free(l->buf);
-	vkDestroyCommandPool(ctx->device, l->pool, NULL);
+	if (l->n_cmd > 0) {
+		free(l->cmd);
+		vkDestroyCommandPool(ctx->device, l->pool, NULL);
+	}
 }
 
 u32 lifetime_acquire(lifetime *l, context *ctx)

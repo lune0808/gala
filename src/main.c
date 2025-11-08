@@ -928,9 +928,10 @@ int main()
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	hw_queue gqueue = hw_queue_ref(&ctx, ctx.specs->iq_graphics);
+	lifetime window_lifetime = lifetime_init(&ctx, gqueue, 0, 0);
 	lifetime loading_lifetime = lifetime_init(&ctx, gqueue,
 		VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
-		| VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, 1);
+		| VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, 4);
 	vulkan_bound_image textures = vulkan_bound_image_upload(&ctx,
 		2, (loaded_image[]){
 			load_image("res/2k_venus_surface.jpg"),
@@ -943,9 +944,11 @@ int main()
 	vulkan_buffer vbuf = data_upload(&ctx,
 		m.nvert * sizeof(vertex), m.vert, &loading_lifetime,
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	lifetime_bind_buffer(&window_lifetime, vbuf);
 	vulkan_buffer ibuf = data_upload(&ctx,
 		m.nindx * sizeof(u32), m.indx, &loading_lifetime,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+	lifetime_bind_buffer(&window_lifetime, ibuf);
 	VkCommandPool pool = command_pool_create(ctx.device,
 		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
@@ -985,10 +988,6 @@ int main()
 	}
 	vkFreeCommandBuffers(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(ctx.device, pool, NULL);
-	vkFreeMemory(ctx.device, ibuf.mem, NULL);
-	vkDestroyBuffer(ctx.device, ibuf.handle, NULL);
-	vkFreeMemory(ctx.device, vbuf.mem, NULL);
-	vkDestroyBuffer(ctx.device, vbuf.handle, NULL);
 	mesh_fini(&m);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
@@ -996,6 +995,7 @@ int main()
 	vulkan_bound_image_destroy(&ctx, &textures);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
 	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
+	lifetime_fini(&window_lifetime, &ctx);
 	attached_swapchain_destroy(&ctx, &sc);
 	context_fini(&ctx);
 	return 0;
