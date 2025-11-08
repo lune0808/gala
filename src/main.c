@@ -917,11 +917,38 @@ VkSampler sampler_create(context *ctx)
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
+typedef struct {
+	vulkan_buffer vert;
+	vulkan_buffer indx;
+} uploaded_mesh;
+
+uploaded_mesh mesh_upload(context *ctx, mesh m,
+	lifetime *cpuside, lifetime *gpuside)
+{
+	vulkan_buffer vert = data_upload(ctx,
+		m.nvert * sizeof(vertex), m.vert,
+		cpuside, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	lifetime_bind_buffer(gpuside, vert);
+	vulkan_buffer indx = data_upload(ctx,
+		m.nindx * sizeof(u32), m.indx,
+		cpuside, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+	lifetime_bind_buffer(gpuside, indx);
+	return (uploaded_mesh){ vert, indx };
+}
+
 int main()
 {
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	hw_queue gqueue = hw_queue_ref(&ctx, ctx.specs->iq_graphics);
+	VkCommandPool pool = command_pool_create(ctx.device,
+		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+	draw_calls draws;
+        command_buffer_create(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
+	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.present_ready);
+	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.render_done);
+	cpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.rendering, VK_FENCE_CREATE_SIGNALED_BIT);
+
 	lifetime window_lifetime = lifetime_init(&ctx, gqueue, 0, 0);
 	lifetime loading_lifetime = lifetime_init(&ctx, gqueue,
 		VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
@@ -937,28 +964,17 @@ int main()
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
 	mesh m = uv_sphere(16, 12, 0.5f);
-	vulkan_buffer vbuf = data_upload(&ctx,
-		m.nvert * sizeof(vertex), m.vert, &loading_lifetime,
-		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-	lifetime_bind_buffer(&window_lifetime, vbuf);
-	vulkan_buffer ibuf = data_upload(&ctx,
-		m.nindx * sizeof(u32), m.indx, &loading_lifetime,
-		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-	lifetime_bind_buffer(&window_lifetime, ibuf);
-	VkCommandPool pool = command_pool_create(ctx.device,
-		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-	draw_calls draws;
-        command_buffer_create(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
-	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.present_ready);
-	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.render_done);
-	cpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.rendering, VK_FENCE_CREATE_SIGNALED_BIT);
+	uploaded_mesh um = mesh_upload(&ctx, m,
+		&loading_lifetime, &window_lifetime);
+	mesh_fini(&m);
 
 	u32 cpu_frame = 0;
 	orbit_tree tree = orbit_tree_init();
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -3.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
-		ctx.window);
+		ctx.window
+	);
 	float dt = 0.0f;
 	context_ignore_mouse_once(&ctx);
 	lifetime_fini(&loading_lifetime, &ctx);
@@ -966,7 +982,7 @@ int main()
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		draw(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			&sc, pipe, vbuf, ibuf,
+			&sc, pipe, um.vert, um.indx,
 			gqueue, &tree, &cam);
 		cpu_frame++;
 		double end_time = glfwGetTime();
@@ -984,7 +1000,6 @@ int main()
 	}
 	vkFreeCommandBuffers(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(ctx.device, pool, NULL);
-	mesh_fini(&m);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
