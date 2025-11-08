@@ -12,23 +12,21 @@ layout(push_constant) uniform draw_data {
 layout(location = 0) in vec3 vert_world_pos;
 layout(location = 1) in vec3 vert_normal;
 layout(location = 2) in vec2 vert_uv;
+layout(location = 3) in vec3 vert_exponents;
+layout(location = 4) in float vert_texindex;
 
 // attachments
 layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-	mat4 nmat = draw.normalmat;
-	float pr = nmat[0].w;
-	float pg = nmat[1].w;
-	float pb = nmat[2].w;
-	vec3 color = texture(tex, vec3(vert_uv, draw.tex)).rgb;
-	color = vec3(pow(color.r, pr), pow(color.g, pg), pow(color.b, pb));
-	vec3 source = nmat[3].xyz;
+	vec3 color = texture(tex, vec3(vert_uv, vert_texindex)).rgb;
+	color = pow(color, vert_exponents);
+	vec3 source = vec3(0.0);
 	vec3 normal = normalize(vert_normal);
 	vec3 to_light = normalize(source - vert_world_pos);
 	float diffuse = pow(max(0.0, dot(to_light, normal)), 8.0);
-	float ambient = nmat[3].w;
+	float ambient = 0.02;
 	frag_color = vec4((ambient + diffuse) * color, 1.0);
 }
 

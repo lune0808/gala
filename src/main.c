@@ -285,7 +285,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 	};
-	VkVertexInputAttributeDescription attributes[3];
+	VkVertexInputAttributeDescription attributes[3 + 4];
 	pipeline_vertex_input_desc(3, attributes,
 		(VkFormat[]){
 			VK_FORMAT_R32G32B32_SFLOAT,
@@ -297,13 +297,36 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 			offsetof(vertex, normal),
 			offsetof(vertex, uv),
 		});
+	attributes[3].binding = 1;
+	attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	attributes[3].location = 3;
+	attributes[3].offset = 0*sizeof(vec4);
+	attributes[4].binding = 1;
+	attributes[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	attributes[4].location = 4;
+	attributes[4].offset = 1*sizeof(vec4);
+	attributes[5].binding = 1;
+	attributes[5].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	attributes[5].location = 5;
+	attributes[5].offset = 2*sizeof(vec4);
+	attributes[6].binding = 1;
+	attributes[6].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+	attributes[6].location = 6;
+	attributes[6].offset = 3*sizeof(vec4);
 	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = 1,
-		.pVertexBindingDescriptions = &(VkVertexInputBindingDescription){
-			.binding = 0,
-			.stride = sizeof(vertex),
-			.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+		.vertexBindingDescriptionCount = 2,
+		.pVertexBindingDescriptions = (VkVertexInputBindingDescription[]){
+			{
+				.binding = 0,
+				.stride = sizeof(vertex),
+				.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+			},
+			{
+				.binding = 1,
+				.stride = sizeof(mat4),
+				.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE,
+			},
 		},
 		.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes),
 		.pVertexAttributeDescriptions = attributes,
@@ -475,6 +498,7 @@ typedef struct {
 	vec4 *worldpos;
 	orbiting *orbit_specs;
 	u32 *index;
+	mat4 *tfm;
 } orbit_tree;
 
 void rand_init()
@@ -518,7 +542,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
-	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0 };
+	orbit_specs[0] = (orbiting){ {}, 0.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0 };
 	orbit_specs[1] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, {1.0f, 1.4f, 1.0f}, 0 };
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
@@ -533,12 +557,13 @@ orbit_tree orbit_tree_init(u32 cnt)
 		glm_vec3_abs(o->exponents, o->exponents);
 		o->parent = 1;
 	}
-	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent };
+	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)) };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
 {
 	free(tree->worldpos);
+	free(tree->tfm);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -556,6 +581,19 @@ void flatten_once(orbit_tree *tree, float time)
 	}
 }
 
+void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
+{
+	orbiting *orbit = &tree->orbit_specs[i];
+	glm_rotate_make(dest, orbit->self_speed * time, orbit->self_axis);
+	float scale = orbit->scale;
+	glm_scale(dest, (vec3){ scale, scale, scale });
+	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
+	dest[0][3] = orbit->exponents[0];
+	dest[1][3] = orbit->exponents[1];
+	dest[2][3] = orbit->exponents[2];
+	dest[3][3] = (float) (i & 1);
+}
+
 void flatten(orbit_tree *tree, float time)
 {
 	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
@@ -566,15 +604,9 @@ void flatten(orbit_tree *tree, float time)
 	for (u32 i = 0; i < tree->height; i++) {
 		flatten_once(tree, time);
 	}
-}
-
-void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
-{
-	orbiting *orbit = &tree->orbit_specs[i];
-	glm_rotate_make(dest, orbit->self_speed * time, orbit->self_axis);
-	float scale = orbit->scale;
-	glm_scale(dest, (vec3){ scale, scale, scale });
-	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
+	for (u32 i = 0; i < tree->n_orbit; i++) {
+		orbit_tree_index(tree, i, time, tree->tfm[i]);
+	}
 }
 
 typedef struct {
@@ -665,10 +697,12 @@ void camera_update(camera *cam, context *ctx, float dt)
 	);
 }
 
-void push_constant_populate(struct push_constant_data *pushc,
-	orbit_tree *tree, u32 i, camera *cam, float now)
+void push_constant_populate(struct push_constant_data *pushc, camera *cam)
 {
+	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
+#if 0
 		orbit_tree_index(tree, i, now, pushc->model);
+
 		glm_mat4_mul(cam->tfm, pushc->model, pushc->mvp);
 		glm_mat4_inv(pushc->model, pushc->normalmat);
 		glm_mat4_transpose(pushc->normalmat);
@@ -678,6 +712,7 @@ void push_constant_populate(struct push_constant_data *pushc,
 		pushc->normalmat[1][3] = tree->orbit_specs[i].exponents[1];
 		pushc->normalmat[2][3] = tree->orbit_specs[i].exponents[2];
 		pushc->tex = (float) (i & 1);
+#endif
 }
 
 typedef struct {
@@ -700,11 +735,13 @@ uploaded_mesh mesh_upload(context *ctx, mesh m,
 }
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
-	uploaded_mesh mesh, orbit_tree *tree, camera *cam)
+	uploaded_mesh mesh, orbit_tree *tree, camera *cam,
+	vulkan_buffer instbuf, void *mapped)
 {
 	// render
 	float now = (float) glfwGetTime();
 	flatten(tree, now);
+	memcpy(mapped, tree->tfm, instbuf.size);
 	// cpu wait for current frame to be done rendering
 	attached_swapchain_swap_buffers(ctx, sc);
 	// recording commands for next frame
@@ -714,17 +751,16 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
-	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vert.handle, &(VkDeviceSize){0});
+	VkBuffer buffers[] = { mesh.vert.handle, instbuf.handle };
+	VkDeviceSize offsets[] = { 0, 0 };
+	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
 	vkCmdBindIndexBuffer(cmd, mesh.indx.handle, 0, VK_INDEX_TYPE_UINT32);
-	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
-		struct push_constant_data pushc;
-		push_constant_populate(&pushc, tree, draw, cam, now);
-		vkCmdPushConstants(cmd, pipe->layout,
-			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-			0, sizeof(pushc), &pushc);
-		vkCmdDrawIndexed(cmd, (u32) mesh.indx.size / sizeof(u32), 1, 0, 0, 0);
-	}
-
+	struct push_constant_data pushc;
+	push_constant_populate(&pushc, cam);
+	vkCmdPushConstants(cmd, pipe->layout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof(pushc), &pushc);
+	vkCmdDrawIndexed(cmd, (u32) mesh.indx.size / sizeof(u32), tree->n_orbit, 0, 0, 0);
 	command_buffer_end(cmd);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
@@ -806,11 +842,16 @@ int main()
 	float dt = 0.0f;
 	context_ignore_mouse_once(&ctx);
 	lifetime_fini(&loading_lifetime, &ctx);
+	vulkan_buffer instbuf = buffer_create(&ctx,
+		tree.n_orbit * sizeof(mat4),
+		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	void *mapped = buffer_map(&ctx, instbuf);
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, um, &tree, &cam);
+		draw(&ctx, &sc, &pipe, um, &tree, &cam, instbuf, mapped);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
@@ -819,6 +860,8 @@ int main()
 	orbit_tree_fini(&tree);
 
 	vkDeviceWaitIdle(ctx.device);
+	vkDestroyBuffer(ctx.device, instbuf.handle, NULL);
+	vkFreeMemory(ctx.device, instbuf.mem, NULL);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
