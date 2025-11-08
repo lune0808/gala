@@ -411,49 +411,69 @@ void mesh_fini(mesh *m)
 	free(m->vert);
 }
 
+VkShaderStageFlagBits shader_stage_from_name(const char *path)
+{
+	if (strstr(path, ".vert.spv"))
+		return VK_SHADER_STAGE_VERTEX_BIT;
+	if (strstr(path, ".frag.spv"))
+		return VK_SHADER_STAGE_FRAGMENT_BIT;
+	if (strstr(path, ".comp.spv"))
+		return VK_SHADER_STAGE_COMPUTE_BIT;
+	crash("unknown shader stage for file \"%s\"", path);
+}
+
+void pipeline_stage_desc(VkDevice device, u32 cnt,
+	VkPipelineShaderStageCreateInfo *desc, VkShaderModule *module,
+	const char **path)
+{
+	for (u32 i = 0; i < cnt; i++) {
+		module[i] = build_shader_module(path[i], device);
+		desc[i] = (VkPipelineShaderStageCreateInfo){
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = shader_stage_from_name(path[i]),
+			.module = module[i],
+			.pName = "main",
+		};
+	}
+}
+
+void pipeline_vertex_input_desc(u32 cnt,
+	VkVertexInputAttributeDescription *desc,
+	VkFormat *fmt, u32 *offset)
+{
+	for (u32 i = 0; i < cnt; i++) {
+		desc[i] = (VkVertexInputAttributeDescription){
+			.binding = 0,
+			.location = i,
+			.format = fmt[i],
+			.offset = offset[i],
+		};
+	}
+}
+
 pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
 	VkImageView tex_view, VkSampler tex_sm)
 {
-	VkShaderModule vert_mod = build_shader_module(vert_path, logical);
-	VkShaderModule frag_mod = build_shader_module(frag_path, logical);
-	VkPipelineShaderStageCreateInfo stg_desc[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = VK_SHADER_STAGE_VERTEX_BIT,
-			.module = vert_mod,
-			.pName = "main",
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-			.module = frag_mod,
-			.pName = "main",
-		}
-	};
+	VkShaderModule shader_module[2];
+	VkPipelineShaderStageCreateInfo stg_desc[2];
+	pipeline_stage_desc(logical, 2, stg_desc, shader_module,
+		(const char*[]){ vert_path, frag_path });
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 	};
-	VkVertexInputAttributeDescription attributes[] = {
-		{
-			.binding = 0,
-			.location = 0,
-			.format = VK_FORMAT_R32G32B32_SFLOAT,
-			.offset = offsetof(vertex, position),
+	VkVertexInputAttributeDescription attributes[3];
+	pipeline_vertex_input_desc(3, attributes,
+		(VkFormat[]){
+			VK_FORMAT_R32G32B32_SFLOAT,
+			VK_FORMAT_R32G32B32_SFLOAT,
+			VK_FORMAT_R32G32_SFLOAT,
 		},
-		{
-			.binding = 0,
-			.location = 1,
-			.format = VK_FORMAT_R32G32B32_SFLOAT,
-			.offset = offsetof(vertex, normal),
-		},
-		{
-			.binding = 0,
-			.location = 2,
-			.format = VK_FORMAT_R32G32_SFLOAT,
-			.offset = offsetof(vertex, uv),
-		},
-	};
+		(u32[]){
+			offsetof(vertex, position),
+			offsetof(vertex, normal),
+			offsetof(vertex, uv),
+		});
 	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		.vertexBindingDescriptionCount = 1,
@@ -580,8 +600,8 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	if (vkCreateGraphicsPipelines(logical, VK_NULL_HANDLE, 1, &gpipe_desc, NULL, &gpipe) != VK_SUCCESS)
 		crash("vkCreateGraphicsPipelines");
 
-	vkDestroyShaderModule(logical, frag_mod, NULL);
-	vkDestroyShaderModule(logical, vert_mod, NULL);
+	vkDestroyShaderModule(logical, shader_module[0], NULL);
+	vkDestroyShaderModule(logical, shader_module[1], NULL);
 	return (pipeline){ gpipe, unif_lyt, set_lyt, dpool, set };
 }
 
