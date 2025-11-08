@@ -19,8 +19,8 @@ vulkan_image vulkan_image_create(context *ctx, VkImageCreateInfo *desc,
 void vulkan_image_destroy(context *ctx, vulkan_image *img);
 
 VkImageView vulkan_image_view_create_external(context *ctx, VkImage handle,
-	VkFormat fmt, u32 mips, VkImageAspectFlags kind);
-VkImageView vulkan_image_view_create(context *ctx, vulkan_image *img,
+	VkFormat fmt, u32 mips, u32 n_img, VkImageAspectFlags kind);
+VkImageView vulkan_image_view_create(context *ctx, vulkan_image *img, u32 n_img,
 	VkImageAspectFlags kind);
 void vulkan_image_view_destroy(context *ctx, VkImageView view);
 

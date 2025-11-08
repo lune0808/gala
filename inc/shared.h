@@ -12,6 +12,7 @@ struct push_constant_data {
 	// row 012.w = rgb exponents
 	mat4 normalmat;
 	mat4 model;
+	float tex;
 };
 
 #endif /* GALA_SHARED_H */

@@ -3,7 +3,7 @@
 #include "shared.h"
 
 // uniforms
-layout(binding = 1) uniform sampler2D tex;
+layout(binding = 1) uniform sampler2DArray tex;
 layout(push_constant) uniform draw_data {
 	push_constant_data draw;
 };
@@ -22,7 +22,7 @@ void main()
 	float pr = nmat[0].w;
 	float pg = nmat[1].w;
 	float pb = nmat[2].w;
-	vec3 color = texture(tex, vert_uv).rgb;
+	vec3 color = texture(tex, vec3(vert_uv, draw.tex)).rgb;
 	color = vec3(pow(color.r, pr), pow(color.g, pg), pow(color.b, pb));
 	vec3 source = nmat[3].xyz;
 	vec3 normal = normalize(vert_normal);

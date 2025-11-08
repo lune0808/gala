@@ -747,7 +747,7 @@ u32 mips_for(u32 width, u32 height)
 	return mips;
 }
 
-void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img,
+void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img,
 	VkImageLayout prev, VkImageLayout next)
 {
 	VkImageMemoryBarrier barrier = {
@@ -761,7 +761,7 @@ void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img,
 		.subresourceRange.baseMipLevel = 0,
 		.subresourceRange.levelCount = img->mips,
 		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = 1,
+		.subresourceRange.layerCount = n_img,
 	};
 	VkPipelineStageFlags rel_stg, acq_stg;
 	if (prev == VK_IMAGE_LAYOUT_UNDEFINED) {
@@ -788,7 +788,7 @@ void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img,
 }
 
 void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image *img,
-	u32 width, u32 height)
+	u32 width, u32 height, u32 n_img)
 {
 	VkBufferImageCopy region = {
 		.bufferOffset = 0,
@@ -797,7 +797,7 @@ void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_image *img,
 		.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 		.imageSubresource.mipLevel = 0,
 		.imageSubresource.baseArrayLayer = 0,
-		.imageSubresource.layerCount = 1,
+		.imageSubresource.layerCount = n_img,
 		.imageOffset = {0, 0, 0},
 		.imageExtent = {width, height, 1},
 	};
@@ -874,6 +874,79 @@ void image_mips_transition(VkCommandBuffer cmd, vulkan_image *img)
 	);
 }
 
+typedef struct {
+	vulkan_image img;
+	u32 n_img;
+} vulkan_image_array;
+
+vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
+	vulkan_queue xfer)
+{
+	VkDeviceSize img_size =
+		  (VkDeviceSize) img->width
+		* (VkDeviceSize) img->height
+		* 4ul;
+	VkDeviceSize size = img_size * (VkDeviceSize) n_img;
+	vulkan_buffer staging = buffer_create_or_crash(ctx,
+		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+		| VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	void *mapped;
+	vkMapMemory(ctx->device, staging.mem, 0, size, 0, &mapped);
+	for (u32 i = 0; i < n_img; i++) {
+		assert(img[i].width  == img[0].width
+		    && img[i].height == img[0].height);
+		memcpy((char*) mapped + i * img_size, img[i].mem, img_size);
+		stbi_image_free(img[i].mem);
+	}
+	vkUnmapMemory(ctx->device, staging.mem);
+	VkImageCreateInfo vimg_desc = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = VK_FORMAT_R8G8B8A8_SRGB,
+		.extent = { (u32) img->width, (u32) img->height, 1 },
+		.mipLevels = 1,
+		.arrayLayers = n_img,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT
+		       | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+		       | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+	vulkan_image vimg = vulkan_image_create(ctx, &vimg_desc,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	VkCommandPool pool = command_pool_create_or_crash(ctx->device,
+		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+	VkCommandBuffer cmd;
+	command_buffer_create_or_crash(ctx->device, pool, 1, &cmd);
+	VkCommandBufferBeginInfo cmd_begin = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	vkBeginCommandBuffer(cmd, &cmd_begin);
+	image_layout_transition(cmd, &vimg, n_img,
+		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	image_transfer(cmd, staging, &vimg,
+		(u32) img->width, (u32) img->height, n_img);
+	image_layout_transition(cmd, &vimg, n_img,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	vkEndCommandBuffer(cmd);
+	VkSubmitInfo submission = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmd,
+	};
+	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
+	vkQueueWaitIdle(xfer.handle);
+	vkDestroyBuffer(ctx->device, staging.buf, NULL);
+	vkFreeMemory(ctx->device, staging.mem, NULL);
+	vkDestroyCommandPool(ctx->device, pool, NULL);
+	return (vulkan_image_array){ vimg, n_img };
+}
+
 vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 {
 	VkDeviceSize size = (VkDeviceSize) img.width * (VkDeviceSize) img.height * 4ul;
@@ -912,9 +985,9 @@ vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 	};
 	vkBeginCommandBuffer(cmd, &cmd_begin);
-	image_layout_transition(cmd, &vimg,
+	image_layout_transition(cmd, &vimg, 1,
 		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	image_transfer(cmd, staging, &vimg, (u32) img.width, (u32) img.height);
+	image_transfer(cmd, staging, &vimg, (u32) img.width, (u32) img.height, 1);
 	image_mips_transition(cmd, &vimg);
 	VkSubmitInfo submission = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1050,6 +1123,7 @@ void flatten(orbit_tree *tree, float time)
 	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
 	for (u32 i = 0; i < tree->n_orbit; i++) {
 		tree->index[i] = i;
+		// tree->orbit_specs[i].speed = 0.0f;
 	}
 	for (u32 i = 0; i < tree->height; i++) {
 		flatten_once(tree, time);
@@ -1216,6 +1290,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 		pushc.normalmat[0][3] = tree->orbit_specs[draw].exponents[0];
 		pushc.normalmat[1][3] = tree->orbit_specs[draw].exponents[1];
 		pushc.normalmat[2][3] = tree->orbit_specs[draw].exponents[2];
+		pushc.tex = (float) (draw & 1);
 		vkCmdPushConstants(cbuf, pipe.layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof(pushc), &pushc);
@@ -1285,9 +1360,12 @@ int main()
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
-	vulkan_image tex_image = image_upload(&ctx,
-		load_image("res/2k_venus_surface.jpg"), gqueue);
-	VkImageView tex_view = vulkan_image_view_create(&ctx, &tex_image,
+	vulkan_image_array tex_image = images_upload(&ctx,
+		2, (image[]){
+			load_image("res/2k_venus_surface.jpg"),
+			load_image("res/2k_mercury.jpg"),
+		}, gqueue);
+	VkImageView tex_view = vulkan_image_view_create(&ctx, &tex_image.img, 2,
 		VK_IMAGE_ASPECT_COLOR_BIT);
 	VkSampler sampler = sampler_create_or_crash(&ctx);
 	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
@@ -1345,7 +1423,7 @@ int main()
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroySampler(ctx.device, sampler, NULL);
 	vulkan_image_view_destroy(&ctx, tex_view);
-	vulkan_image_destroy(&ctx, &tex_image);
+	vulkan_image_destroy(&ctx, &tex_image.img);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
 	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
 	attached_swapchain_destroy(&ctx, &sc);

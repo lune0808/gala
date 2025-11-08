@@ -34,26 +34,28 @@ void vulkan_image_destroy(context *ctx, vulkan_image *img)
 	vkFreeMemory(ctx->device, img->mem, NULL);
 }
 
-VkImageView vulkan_image_view_create(context *ctx, vulkan_image *img,
+VkImageView vulkan_image_view_create(context *ctx, vulkan_image *img, u32 n_img,
 	VkImageAspectFlags kind)
 {
 	return vulkan_image_view_create_external(ctx,
-		img->handle, img->fmt, img->mips, kind);
+		img->handle, img->fmt, img->mips, n_img, kind);
 }
 
 VkImageView vulkan_image_view_create_external(context *ctx, VkImage handle,
-	VkFormat fmt, u32 mips, VkImageAspectFlags kind)
+	VkFormat fmt, u32 mips, u32 n_img, VkImageAspectFlags kind)
 {
 	VkImageViewCreateInfo desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 		.image = handle,
-		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.viewType = (n_img == 1) ?
+			VK_IMAGE_VIEW_TYPE_2D:
+			VK_IMAGE_VIEW_TYPE_2D_ARRAY,
 		.format = fmt,
 		.subresourceRange.aspectMask = kind,
 		.subresourceRange.baseMipLevel = 0,
 		.subresourceRange.levelCount = mips,
 		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = 1,
+		.subresourceRange.layerCount = n_img,
 	};
 	VkImageView view;
 	if (vkCreateImageView(ctx->device, &desc, NULL, &view) != VK_SUCCESS)
@@ -70,7 +72,7 @@ vulkan_bound_image_view vulkan_bound_image_view_create(context *ctx,
 	VkImageCreateInfo *desc, VkMemoryPropertyFlags memory, VkImageAspectFlags kind)
 {
 	vulkan_image img = vulkan_image_create(ctx, desc, memory);
-	VkImageView view = vulkan_image_view_create(ctx, &img, kind);
+	VkImageView view = vulkan_image_view_create(ctx, &img, 1u, kind);
 	return (vulkan_bound_image_view){ img, view };
 }
 

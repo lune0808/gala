@@ -60,7 +60,7 @@ vulkan_swapchain vulkan_swapchain_create(context *ctx)
 	swap.view = (void*) ((char*) swap.slot + swap.n_slot * sizeof(*swap.slot));
 	for (u32 i = 0; i < swap.n_slot; i++) {
 		swap.view[i] = vulkan_image_view_create_external(ctx, swap.slot[i],
-			fmt.format, 1u, VK_IMAGE_ASPECT_COLOR_BIT);
+			fmt.format, 1u, 1u, VK_IMAGE_ASPECT_COLOR_BIT);
 	}
 	return swap;
 }
