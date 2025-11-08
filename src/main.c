@@ -477,23 +477,63 @@ typedef struct {
 	u32 *index;
 } orbit_tree;
 
-orbit_tree orbit_tree_init()
+void rand_init()
 {
-	u32 n_orbit = 1
-		    + 7;
+	srand(0x7819e801u);
+}
+
+u32 rand_u32(u32 min, u32 max)
+{
+	if (min == max)
+		return min;
+	return min + (u32) rand() % (max - min);
+}
+
+float rand_float(float min, float max)
+{
+	return min + (max - min) * ((float) rand() / (float) RAND_MAX);
+}
+
+void rand_vec3_dir(float zmin, float zmax, vec3 dest)
+{
+	float xy_angle = rand_float(0.0f, 2.0f * (float) M_PI);
+	float z_angle = rand_float(zmin, zmax);
+	float sinz = sinf(z_angle);
+	dest[0] = sinz * cosf(xy_angle);
+	dest[1] = sinz * sinf(xy_angle);
+	dest[2] = cosf(z_angle);
+}
+
+void rand_vec3_shell(float zmin, float zmax, float rmin, float rmax, vec3 dest)
+{
+	rand_vec3_dir(zmin, zmax, dest);
+	float r = rand_float(rmin, rmax);
+	glm_vec3_scale(dest, r, dest);
+}
+
+orbit_tree orbit_tree_init(u32 cnt)
+{
+	u32 n_orbit = 1 + cnt;
 	char *mem = xmalloc(n_orbit * (sizeof(vec4) + sizeof(orbiting) + sizeof(u32)));
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
 	orbit_specs[0] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0 };
-	orbit_specs[1] = (orbiting){ { 0.0f, 0.0f, 1.0f }, 0.50f, {1.0f, 0.0f, 0.0f}, 1.0f, {1.0f, 0.0f, 4.0f}, 2.0f, {1.4f, 1.0f, 1.0f}, 0 };
-	orbit_specs[2] = (orbiting){ { 1.0f, 0.5f, 0.0f }, 0.40f, {0.0f, 0.0f, 1.0f}, 2.0f, {0.9f, 0.0f, 2.0f}, 3.3f, {1.0f, 1.4f, 1.0f}, 0 };
-	orbit_specs[3] = (orbiting){ { 0.6f, 0.0f, 0.0f }, 0.30f, {0.0f, 0.0f, 1.0f}, 3.0f, {0.2f, 0.0f, 9.0f}, 0.8f, {1.0f, 1.0f, 1.4f}, 2 };
-	orbit_specs[4] = (orbiting){ { 0.3f, 0.0f, 0.0f }, 0.15f, {0.0f, 0.0f, 1.0f}, 4.0f, {0.1f, 0.6f, 0.0f}, 1.0f, {1.4f, 1.4f, 1.0f}, 3 };
-	orbit_specs[5] = (orbiting){ { 0.0f, 0.0f, 0.2f }, 0.06f, {1.0f, 0.0f, 0.0f}, 5.0f, {1.0f, 0.0f, 0.0f}, 7.1f, {1.0f, 1.4f, 1.4f}, 4 };
-	orbit_specs[6] = (orbiting){ { 0.1f, 1.0f, 0.0f }, 0.10f, {0.0f, 0.0f, 1.0f},-6.0f, {1.0f, 1.0f, 1.0f}, 0.0f, {1.4f, 1.0f, 1.4f}, 2 };
-	orbit_specs[7] = (orbiting){ { 0.1f,-1.3f, 0.0f }, 0.20f, {0.0f, 0.0f, 1.0f}, 7.0f, {1.0f, 0.0f, 0.0f}, 0.6f, {1.4f, 1.4f, 1.4f}, 2 };
-	return (orbit_tree){ 4, n_orbit, worldpos, orbit_specs, parent };
+	orbit_specs[1] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, {1.0f, 1.4f, 1.0f}, 0 };
+	const float PI = (float) M_PI;
+	for (u32 i = 2; i < cnt; i++) {
+		orbiting *o = &orbit_specs[i];
+		rand_vec3_shell(0.49f * PI, 0.51f * PI, 2.0f, 12.0f, o->offset);
+		o->scale = rand_float(1.0f/16.0f, 1.0f/4.0f);
+		rand_vec3_dir(0.0f, 1.0f/128.0f * PI, o->axis);
+		o->speed = rand_float(0.5f, 0.55f);
+		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
+		o->self_speed = rand_float(-4.0f, +4.0f);
+		rand_vec3_shell(0.75f * PI, 0.25f * PI, 0.8f, 1.3f, o->exponents);
+		glm_vec3_abs(o->exponents, o->exponents);
+		o->parent = 1;
+	}
+	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
@@ -757,9 +797,9 @@ int main()
 	uploaded_mesh um = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
-	orbit_tree tree = orbit_tree_init();
+	orbit_tree tree = orbit_tree_init(1u << 12);
 	camera cam = camera_init(sc.base.dim,
-		(vec3){ 0.0f, -3.0f, 2.0f },
+		(vec3){ 0.0f, -12.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
 		ctx.window
 	);
