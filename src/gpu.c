@@ -119,13 +119,13 @@ static u32 extension_match(VkPhysicalDevice dev,
 	return ~diff;
 }
 
-static void init_glfw_or_crash()
+static void init_glfw()
 {
 	if (glfwInit() != GLFW_TRUE)
 		crash("glfwInit");
 }
 
-static GLFWwindow *glfw_window_or_crash(int width, int height, const char *title)
+static GLFWwindow *glfw_window(int width, int height, const char *title)
 {
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	GLFWwindow *window = glfwCreateWindow(width, height, title, NULL, NULL);
@@ -136,7 +136,7 @@ static GLFWwindow *glfw_window_or_crash(int width, int height, const char *title
 
 static const char *const validation = "VK_LAYER_KHRONOS_validation";
 
-static void vulkan_validation_layers_or_crash()
+static void vulkan_validation_layers()
 {
 	u32 n_lyr;
 	vkEnumerateInstanceLayerProperties(&n_lyr, NULL);
@@ -151,7 +151,7 @@ static void vulkan_validation_layers_or_crash()
 	crash("validation layer '%s' not found");
 }
 
-static VkInstance vulkan_instance_or_crash()
+static VkInstance vulkan_instance()
 {
 	VkApplicationInfo app_desc = {
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -166,7 +166,7 @@ static VkInstance vulkan_instance_or_crash()
 		.pApplicationInfo = &app_desc,
 	};
 #ifndef NDEBUG
-	vulkan_validation_layers_or_crash();
+	vulkan_validation_layers();
 	inst_desc.enabledLayerCount = 1;
 	inst_desc.ppEnabledLayerNames = &validation;
 #endif
@@ -188,7 +188,7 @@ static const char *extensions[] = {
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 };
 
-static VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst,
+static VkPhysicalDevice vulkan_select_gpu(VkInstance inst,
 	VkSurfaceKHR target, gpu_specs *out_specs)
 {
 	VkPhysicalDevice selected = VK_NULL_HANDLE;
@@ -229,7 +229,7 @@ static VkPhysicalDevice vulkan_select_gpu_or_crash(VkInstance inst,
 	return selected;
 }
 
-static VkDevice vulkan_logical_device_or_crash(VkPhysicalDevice physical,
+static VkDevice vulkan_logical_device(VkPhysicalDevice physical,
 	gpu_specs specs)
 {
 	VkDeviceQueueCreateInfo queue_desc[] = {
@@ -296,14 +296,14 @@ static VkPresentModeKHR surface_present_mode(VkPhysicalDevice dev, VkSurfaceKHR 
 
 context context_init(int width, int height, const char *title)
 {
-	init_glfw_or_crash();
-	GLFWwindow *window = glfw_window_or_crash(width, height, title);
-	VkInstance vk_instance = vulkan_instance_or_crash();
+	init_glfw();
+	GLFWwindow *window = glfw_window(width, height, title);
+	VkInstance vk_instance = vulkan_instance();
 	VkSurfaceKHR window_surface = vulkan_surface(vk_instance, window);
 	gpu_specs specs;
-	VkPhysicalDevice physical_device = vulkan_select_gpu_or_crash(
+	VkPhysicalDevice physical_device = vulkan_select_gpu(
 		vk_instance, window_surface, &specs);
-	VkDevice device = vulkan_logical_device_or_crash(physical_device, specs);
+	VkDevice device = vulkan_logical_device(physical_device, specs);
 	VkSurfaceFormatKHR present_surface_fmt = surface_fmt(
 		physical_device, window_surface);
 	VkPresentModeKHR present_mode = surface_present_mode(

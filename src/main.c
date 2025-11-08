@@ -16,7 +16,7 @@
 #include "swapchain.h"
 #include "image.h"
 
-VkRenderPass render_pass_create_or_crash(VkDevice logical, VkFormat fmt,
+VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
 {
 	VkAttachmentDescription attacht[] = {
@@ -121,7 +121,7 @@ typedef struct {
 	VkFramebuffer *framebuffer;
 } attached_swapchain;
 
-VkFramebuffer *framebuf_attach_or_crash(VkDevice logical, vulkan_swapchain *swap, VkRenderPass pass, VkImageView depth_view)
+VkFramebuffer *framebuf_attach(VkDevice logical, vulkan_swapchain *swap, VkRenderPass pass, VkImageView depth_view)
 {
 	VkFramebuffer *framebuf = xmalloc(swap->n_slot * sizeof *framebuf);
 	for (u32 i = 0; i < swap->n_slot; i++) {
@@ -176,9 +176,9 @@ attached_swapchain attached_swapchain_create(context *ctx)
 {
 	vulkan_swapchain base = vulkan_swapchain_create(ctx);
 	vulkan_bound_image_view depth_buffer = depth_buffer_create(ctx, base.dim);
-	VkRenderPass pass = render_pass_create_or_crash(ctx->device,
+	VkRenderPass pass = render_pass_create(ctx->device,
 		base.fmt, depth_buffer.img.fmt);
-	VkFramebuffer *framebuffer = framebuf_attach_or_crash(ctx->device,
+	VkFramebuffer *framebuffer = framebuf_attach(ctx->device,
 		&base, pass, depth_buffer.view);
 	return (attached_swapchain){ base, depth_buffer, pass, framebuffer };
 }
@@ -198,7 +198,7 @@ typedef struct {
 	size_t size;
 } buffer;
 
-buffer load_file_or_crash(const char *path)
+buffer load_file(const char *path)
 {
 	FILE *f = fopen(path, "rb");
 	if (!f) goto fail_open;
@@ -229,9 +229,9 @@ fail_open:
 	crash("load file '%s' failed");
 }
 
-VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
+VkShaderModule build_shader_module(const char *path, VkDevice logical)
 {
-	buffer buf = load_file_or_crash(path);
+	buffer buf = load_file(path);
 	VkShaderModuleCreateInfo desc = {
 		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 		.codeSize = buf.size,
@@ -244,7 +244,7 @@ VkShaderModule build_shader_module_or_crash(const char *path, VkDevice logical)
 	return sh;
 }
 
-VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical,
+VkDescriptorSetLayout descriptor_set_lyt_create(VkDevice logical,
 	u32 n_bind_desc, VkDescriptorSetLayoutBinding *bind_desc)
 {
 	VkDescriptorSetLayoutCreateInfo lyt_desc = {
@@ -258,7 +258,7 @@ VkDescriptorSetLayout descriptor_set_lyt_create_or_crash(VkDevice logical,
 	return lyt;
 }
 
-VkDescriptorPool descr_pool_create_or_crash(VkDevice logical,
+VkDescriptorPool descr_pool_create(VkDevice logical,
 	u32 n_pool_sizes, VkDescriptorPoolSize *pool_sizes)
 {
 	VkDescriptorPoolCreateInfo pool_desc = {
@@ -273,7 +273,7 @@ VkDescriptorPool descr_pool_create_or_crash(VkDevice logical,
 	return pool;
 }
 
-VkDescriptorSet *descr_set_create_or_crash(VkDevice logical,
+VkDescriptorSet *descr_set_create(VkDevice logical,
 	VkDescriptorPool pool, VkDescriptorSetLayout lyt)
 {
 	VkDescriptorSetLayout lyt_dupes[MAX_FRAMES_RENDERING];
@@ -292,7 +292,7 @@ VkDescriptorSet *descr_set_create_or_crash(VkDevice logical,
 	return set;
 }
 
-u32 constrain_memory_type_or_crash(context *ctx, u32 allowed, VkMemoryPropertyFlags cons)
+u32 constrain_memory_type(context *ctx, u32 allowed, VkMemoryPropertyFlags cons)
 {
 	VkPhysicalDeviceMemoryProperties *props = &ctx->specs->memory;
 	for (u32 i = 0; i < props->memoryTypeCount; i++) {
@@ -311,7 +311,7 @@ typedef struct {
 	VkDeviceSize size;
 } vulkan_buffer;
 
-vulkan_buffer buffer_create_or_crash(context *ctx,
+vulkan_buffer buffer_create(context *ctx,
 	VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags cons)
 {
 	VkBufferCreateInfo buf_desc = {
@@ -328,7 +328,7 @@ vulkan_buffer buffer_create_or_crash(context *ctx,
 	VkMemoryAllocateInfo mem_desc = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 		.allocationSize = reqs.size,
-		.memoryTypeIndex = constrain_memory_type_or_crash(
+		.memoryTypeIndex = constrain_memory_type(
 			ctx,
 			reqs.memoryTypeBits,
 			cons
@@ -456,12 +456,12 @@ void mesh_fini(mesh *m)
 	free(m->vert);
 }
 
-pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *frag_path,
+pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
 	VkImageView tex_view, VkSampler tex_sm)
 {
-	VkShaderModule vert_mod = build_shader_module_or_crash(vert_path, logical);
-	VkShaderModule frag_mod = build_shader_module_or_crash(frag_path, logical);
+	VkShaderModule vert_mod = build_shader_module(vert_path, logical);
+	VkShaderModule frag_mod = build_shader_module(frag_path, logical);
 	VkPipelineShaderStageCreateInfo stg_desc[] = {
 		{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -576,7 +576,7 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
 		}
 	};
-	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create_or_crash(logical,
+	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(logical,
 		ARRAY_SIZE(bind_desc), bind_desc);
 	VkDescriptorPoolSize pool_sizes[] = {
 		{
@@ -584,9 +584,9 @@ pipeline graphics_pipeline_create_or_crash(const char *vert_path, const char *fr
 			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
 		},
 	};
-	VkDescriptorPool dpool = descr_pool_create_or_crash(logical,
+	VkDescriptorPool dpool = descr_pool_create(logical,
 		ARRAY_SIZE(pool_sizes), pool_sizes);
-	VkDescriptorSet *set = descr_set_create_or_crash(logical,
+	VkDescriptorSet *set = descr_set_create(logical,
 		dpool, set_lyt);
 	descr_set_config(logical, set, tex_view, tex_sm);
 	VkPipelineLayoutCreateInfo unif_lyt_desc = {
@@ -644,7 +644,7 @@ vulkan_queue vulkan_queue_ref(context *ctx, u32 family_index)
 	return (vulkan_queue){ handle, family_index, queue_index };
 }
 
-VkCommandPool command_pool_create_or_crash(VkDevice logical,
+VkCommandPool command_pool_create(VkDevice logical,
 	vulkan_queue queue, VkCommandPoolCreateFlags flags)
 {
 	VkCommandPoolCreateInfo pool_desc = {
@@ -666,7 +666,7 @@ void buffer_populate(VkDevice logical, vulkan_buffer b, const void *data)
 	vkUnmapMemory(logical, b.mem);
 }
 
-void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool,
+void command_buffer_create(VkDevice logical, VkCommandPool pool,
 	u32 cnt, VkCommandBuffer *cmd)
 {
 	VkCommandBufferAllocateInfo buf_desc = {
@@ -683,10 +683,10 @@ void command_buffer_create_or_crash(VkDevice logical, VkCommandPool pool,
 void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 	vulkan_queue xfer)
 {
-	VkCommandPool pool = command_pool_create_or_crash(logical,
+	VkCommandPool pool = command_pool_create(logical,
 		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
-	command_buffer_create_or_crash(logical, pool, 1, &cmd);
+	command_buffer_create(logical, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -713,11 +713,11 @@ void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
 vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
 	vulkan_queue xfer, VkBufferUsageFlags usage)
 {
-	vulkan_buffer staging = buffer_create_or_crash(ctx,
+	vulkan_buffer staging = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(ctx->device, staging, data);
-	vulkan_buffer uploaded = buffer_create_or_crash(ctx,
+	vulkan_buffer uploaded = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|usage,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	data_transfer(ctx->device, uploaded, staging, xfer);
@@ -863,7 +863,7 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 {
 	VkDeviceSize img_size = img->width * img->height * 4ul;
 	VkDeviceSize size = img_size * (VkDeviceSize) n_img;
-	vulkan_buffer staging = buffer_create_or_crash(ctx,
+	vulkan_buffer staging = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
 		| VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -893,10 +893,10 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 	};
 	vulkan_image vimg = vulkan_image_create(ctx, &vimg_desc,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	VkCommandPool pool = command_pool_create_or_crash(ctx->device,
+	VkCommandPool pool = command_pool_create(ctx->device,
 		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
-	command_buffer_create_or_crash(ctx->device, pool, 1, &cmd);
+	command_buffer_create(ctx->device, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -926,7 +926,7 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 vulkan_image image_upload(context *ctx, loaded_image img, vulkan_queue xfer)
 {
 	VkDeviceSize size = img.width * img.height * 4ul;
-	vulkan_buffer staging = buffer_create_or_crash(ctx,
+	vulkan_buffer staging = buffer_create(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(ctx->device, staging, img.mem);
@@ -952,10 +952,10 @@ vulkan_image image_upload(context *ctx, loaded_image img, vulkan_queue xfer)
 	vkGetPhysicalDeviceFormatProperties(ctx->physical_device, vimg.fmt, &props);
 	if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
 		crash("vkCmdBlitImage not available for mipmap generation");
-	VkCommandPool pool = command_pool_create_or_crash(ctx->device,
+	VkCommandPool pool = command_pool_create(ctx->device,
 		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 	VkCommandBuffer cmd;
-	command_buffer_create_or_crash(ctx->device, pool, 1, &cmd);
+	command_buffer_create(ctx->device, pool, 1, &cmd);
 	VkCommandBufferBeginInfo cmd_begin = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -1016,7 +1016,7 @@ typedef struct {
 	VkFence rendering[MAX_FRAMES_RENDERING];
 } fences;
 
-void sync_create_or_crash(VkDevice logical, u32 cnt,
+void sync_create(VkDevice logical, u32 cnt,
 	VkSemaphore *present_ready, VkSemaphore *render_done, VkFence *rendering)
 {
 	VkSemaphoreCreateInfo sem_desc = {
@@ -1208,7 +1208,7 @@ typedef struct {
 	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
 } draw_calls;
 
-void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
+void draw(context *ctx, draw_calls info, u32 upcoming_index,
 	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
 	vulkan_buffer ibuf, vulkan_queue gqueue, orbit_tree *tree,
 	camera *cam)
@@ -1279,7 +1279,7 @@ void draw_or_crash(context *ctx, draw_calls info, u32 upcoming_index,
 	vkQueuePresentKHR(gqueue.handle, &present_desc);
 }
 
-VkSampler sampler_create_or_crash(context *ctx)
+VkSampler sampler_create(context *ctx)
 {
 	VkPhysicalDeviceProperties *props = &ctx->specs->properties;
 	VkSamplerCreateInfo sm_desc = {
@@ -1320,8 +1320,8 @@ int main()
 		}, gqueue);
 	VkImageView tex_view = vulkan_image_view_create(&ctx, &tex_image.img, 2,
 		VK_IMAGE_ASPECT_COLOR_BIT);
-	VkSampler sampler = sampler_create_or_crash(&ctx);
-	pipeline pipe = graphics_pipeline_create_or_crash("bin/shader.vert.spv", "bin/shader.frag.spv",
+	VkSampler sampler = sampler_create(&ctx);
+	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, tex_view, sampler);
 	mesh m = uv_sphere(16, 12, 0.5f);
 	vulkan_buffer vbuf = data_upload(&ctx,
@@ -1330,11 +1330,11 @@ int main()
 	vulkan_buffer ibuf = data_upload(&ctx,
 		m.nindx * sizeof(u32), m.indx, gqueue,
 		VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-	VkCommandPool pool = command_pool_create_or_crash(ctx.device,
+	VkCommandPool pool = command_pool_create(ctx.device,
 		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 	draw_calls draws;
-        command_buffer_create_or_crash(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
-	sync_create_or_crash(ctx.device, MAX_FRAMES_RENDERING,
+        command_buffer_create(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
+	sync_create(ctx.device, MAX_FRAMES_RENDERING,
 		draws.sync.present_ready, draws.sync.render_done, draws.sync.rendering);
 
 	u32 cpu_frame = 0;
@@ -1348,7 +1348,7 @@ int main()
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
-		draw_or_crash(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
+		draw(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
 			&sc, pipe, vbuf, ibuf,
 			gqueue, &tree, &cam);
 		cpu_frame++;

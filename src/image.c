@@ -32,11 +32,11 @@ vulkan_image vulkan_image_create(context *ctx, VkImageCreateInfo *desc,
 		crash("vkCreateImage");
 	VkMemoryRequirements req;
 	vkGetImageMemoryRequirements(ctx->device, handle, &req);
-	extern u32 constrain_memory_type_or_crash(context*, u32, VkMemoryPropertyFlags);
+	extern u32 constrain_memory_type(context*, u32, VkMemoryPropertyFlags);
 	VkMemoryAllocateInfo alloc_desc = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 		.allocationSize = req.size,
-		.memoryTypeIndex = constrain_memory_type_or_crash(
+		.memoryTypeIndex = constrain_memory_type(
 			ctx, req.memoryTypeBits, memory
 		),
 	};
