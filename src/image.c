@@ -1,6 +1,28 @@
+#include <math.h>
+#include <stb/stb_image.h>
 #include "image.h"
 #include "util.h"
 
+
+loaded_image load_image(const char *path)
+{
+	int w, h, ch;
+	void *ptr = stbi_load(path, &w, &h, &ch, 4);
+	if (!ptr) crash("stbi_load");
+	return (loaded_image){ (u32) w, (u32) h, ptr };
+}
+
+void loaded_image_fini(loaded_image img)
+{
+	stbi_image_free(img.mem);
+}
+
+u32 mips_for(u32 width, u32 height)
+{
+	float max_dim = MAX((float) width, (float) height);
+	u32 mips = 1u + (u32) log2f(max_dim);
+	return mips;
+}
 
 vulkan_image vulkan_image_create(context *ctx, VkImageCreateInfo *desc,
 	VkMemoryPropertyFlags memory)

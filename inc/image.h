@@ -7,6 +7,16 @@
 #include "gpu.h"
 
 typedef struct {
+	u32 width;
+	u32 height;
+	void *mem;
+} loaded_image;
+
+loaded_image load_image(const char *path);
+void loaded_image_fini(loaded_image img);
+u32 mips_for(u32 width, u32 height);
+
+typedef struct {
 	VkImage handle;
 	VkDeviceMemory mem;
 	VkExtent2D dim;

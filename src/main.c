@@ -726,32 +726,6 @@ vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
 	return uploaded;
 }
 
-typedef struct {
-	u32 width;
-	u32 height;
-	void *mem;
-} image;
-
-image load_image(const char *path)
-{
-	int w, h, ch;
-	void *ptr = stbi_load(path, &w, &h, &ch, 4);
-	if (!ptr) crash("stbi_load");
-	return (image){ (u32) w, (u32) h, ptr };
-}
-
-void image_fini(image img)
-{
-	stbi_image_free(img.mem);
-}
-
-u32 mips_for(u32 width, u32 height)
-{
-	float max_dim = MAX((float) width, (float) height);
-	u32 mips = 1u + (u32) floorf(log2f(max_dim));
-	return mips;
-}
-
 void image_layout_transition(VkCommandBuffer cmd, vulkan_image *img, u32 n_img,
 	VkImageLayout prev, VkImageLayout next)
 {
@@ -884,7 +858,7 @@ typedef struct {
 	u32 n_img;
 } vulkan_image_array;
 
-vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
+vulkan_image_array images_upload(context *ctx, u32 n_img, loaded_image *img,
 	vulkan_queue xfer)
 {
 	VkDeviceSize img_size = img->width * img->height * 4ul;
@@ -899,7 +873,7 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
 		assert(img[i].width  == img[0].width
 		    && img[i].height == img[0].height);
 		memcpy((char*) mapped + i * img_size, img[i].mem, img_size);
-		image_fini(img[i]);
+		loaded_image_fini(img[i]);
 	}
 	vkUnmapMemory(ctx->device, staging.mem);
 	VkImageCreateInfo vimg_desc = {
@@ -949,14 +923,14 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
 	return (vulkan_image_array){ vimg, n_img };
 }
 
-vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
+vulkan_image image_upload(context *ctx, loaded_image img, vulkan_queue xfer)
 {
 	VkDeviceSize size = img.width * img.height * 4ul;
 	vulkan_buffer staging = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(ctx->device, staging, img.mem);
-	image_fini(img);
+	loaded_image_fini(img);
 	VkImageCreateInfo img_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
@@ -1340,7 +1314,7 @@ int main()
 	attached_swapchain sc = attached_swapchain_create(&ctx);
 	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
 	vulkan_image_array tex_image = images_upload(&ctx,
-		2, (image[]){
+		2, (loaded_image[]){
 			load_image("res/2k_venus_surface.jpg"),
 			load_image("res/2k_mercury.jpg"),
 		}, gqueue);
