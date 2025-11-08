@@ -1148,6 +1148,21 @@ void camera_update(camera *cam, context *ctx, float dt)
 	);
 }
 
+void push_constant_populate(struct push_constant_data *pushc,
+	orbit_tree *tree, u32 i, camera *cam, float now)
+{
+		orbit_tree_index(tree, i, now, pushc->model);
+		glm_mat4_mul(cam->tfm, pushc->model, pushc->mvp);
+		glm_mat4_inv(pushc->model, pushc->normalmat);
+		glm_mat4_transpose(pushc->normalmat);
+		memcpy(pushc->normalmat[3], cam->pos, sizeof(vec3));
+		pushc->normalmat[3][3] = 0.02f;
+		pushc->normalmat[0][3] = tree->orbit_specs[i].exponents[0];
+		pushc->normalmat[1][3] = tree->orbit_specs[i].exponents[1];
+		pushc->normalmat[2][3] = tree->orbit_specs[i].exponents[2];
+		pushc->tex = (float) (i & 1);
+}
+
 typedef struct {
 	fences sync;
 	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
@@ -1178,17 +1193,7 @@ void draw(context *ctx, draw_calls info, u32 upcoming_index,
 	flatten(tree, now);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
-		orbit_tree_index(tree, draw, now, pushc.model);
-		glm_mat4_mul(cam->tfm, pushc.model, pushc.mvp);
-		// normal matrix
-		glm_mat4_inv(pushc.model, pushc.normalmat);
-		glm_mat4_transpose(pushc.normalmat);
-		memcpy(pushc.normalmat[3], cam->pos, sizeof(vec3));
-		pushc.normalmat[3][3] = 0.02f;
-		pushc.normalmat[0][3] = tree->orbit_specs[draw].exponents[0];
-		pushc.normalmat[1][3] = tree->orbit_specs[draw].exponents[1];
-		pushc.normalmat[2][3] = tree->orbit_specs[draw].exponents[2];
-		pushc.tex = (float) (draw & 1);
+		push_constant_populate(&pushc, tree, draw, cam, now);
 		vkCmdPushConstants(cbuf, pipe.layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof(pushc), &pushc);
