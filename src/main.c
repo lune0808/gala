@@ -123,6 +123,13 @@ typedef struct {
 	vulkan_bound_image depth_buffer;
 	VkRenderPass pass;
 	VkFramebuffer *framebuffer;
+	hw_queue graphics_queue;
+	VkCommandPool graphics_pool;
+	VkCommandBuffer graphics_cmd[MAX_FRAMES_RENDERING];
+	VkSemaphore present_ready[MAX_FRAMES_RENDERING];
+	VkSemaphore render_done[MAX_FRAMES_RENDERING];
+	VkFence rendering[MAX_FRAMES_RENDERING];
+	u32 frame_indx;
 } attached_swapchain;
 
 VkFramebuffer *framebuf_attach(VkDevice logical, vulkan_swapchain *swap, VkRenderPass pass, VkImageView depth_view)
@@ -178,17 +185,79 @@ vulkan_bound_image depth_buffer_create(context *ctx, VkExtent2D dims)
 
 attached_swapchain attached_swapchain_create(context *ctx)
 {
-	vulkan_swapchain base = vulkan_swapchain_create(ctx);
-	vulkan_bound_image depth_buffer = depth_buffer_create(ctx, base.dim);
-	VkRenderPass pass = render_pass_create(ctx->device,
-		base.fmt, depth_buffer.fmt);
-	VkFramebuffer *framebuffer = framebuf_attach(ctx->device,
-		&base, pass, depth_buffer.view);
-	return (attached_swapchain){ base, depth_buffer, pass, framebuffer };
+	attached_swapchain sc;
+	sc.base = vulkan_swapchain_create(ctx);
+	sc.depth_buffer = depth_buffer_create(ctx, sc.base.dim);
+	sc.pass = render_pass_create(ctx->device,
+		sc.base.fmt, sc.depth_buffer.fmt);
+	sc.framebuffer = framebuf_attach(ctx->device,
+		&sc.base, sc.pass, sc.depth_buffer.view);
+	sc.graphics_queue = hw_queue_ref(ctx, ctx->specs->iq_graphics);
+	sc.graphics_pool = command_pool_create(ctx->device, sc.graphics_queue,
+		VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+	command_buffer_create(ctx->device, sc.graphics_pool,
+		MAX_FRAMES_RENDERING, sc.graphics_cmd);
+	gpu_fence_create(ctx->device,
+		MAX_FRAMES_RENDERING, sc.present_ready);
+	gpu_fence_create(ctx->device,
+		MAX_FRAMES_RENDERING, sc.render_done);
+	cpu_fence_create(ctx->device,
+		MAX_FRAMES_RENDERING, sc.rendering, VK_FENCE_CREATE_SIGNALED_BIT);
+	sc.frame_indx = 0;
+	return sc;
+}
+
+VkCommandBuffer attached_swapchain_current_graphics_cmd(attached_swapchain *sc)
+{
+	return sc->graphics_cmd[sc->frame_indx];
+}
+
+VkSemaphore *attached_swapchain_current_present_ready(attached_swapchain *sc)
+{
+	return &sc->present_ready[sc->frame_indx];
+}
+
+VkSemaphore *attached_swapchain_current_render_done(attached_swapchain *sc)
+{
+	return &sc->render_done[sc->frame_indx];
+}
+
+VkFence attached_swapchain_current_rendering(attached_swapchain *sc)
+{
+	return sc->rendering[sc->frame_indx];
+}
+
+void attached_swapchain_swap_buffers(context *ctx, attached_swapchain *sc)
+{
+	sc->frame_indx = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
+	cpu_fence_wait_one(ctx->device,
+		attached_swapchain_current_rendering(sc), UINT64_MAX);
+	vkAcquireNextImageKHR(ctx->device, sc->base.handle, UINT64_MAX,
+		*attached_swapchain_current_present_ready(sc),
+		VK_NULL_HANDLE, &sc->base.i_slot);
+}
+
+void attached_swapchain_present(attached_swapchain *sc)
+{
+	VkPresentInfoKHR present_desc = {
+		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = attached_swapchain_current_render_done(sc),
+		.swapchainCount = 1,
+		.pSwapchains = &sc->base.handle,
+		.pImageIndices = &sc->base.i_slot,
+	};
+	vkQueuePresentKHR(sc->graphics_queue.handle, &present_desc);
 }
 
 void attached_swapchain_destroy(context *ctx, attached_swapchain *sc)
 {
+	vkDestroyCommandPool(ctx->device, sc->graphics_pool, NULL);
+	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
+		vkDestroyFence(ctx->device, sc->rendering[i], NULL);
+		vkDestroySemaphore(ctx->device, sc->render_done[i], NULL);
+		vkDestroySemaphore(ctx->device, sc->present_ready[i], NULL);
+	}
 	for (u32 i = 0; i < sc->base.n_slot; i++) {
 		vkDestroyFramebuffer(ctx->device, sc->framebuffer[i], NULL);
 	}
@@ -824,68 +893,69 @@ void push_constant_populate(struct push_constant_data *pushc,
 }
 
 typedef struct {
-	fences sync;
-	VkCommandBuffer commands[MAX_FRAMES_RENDERING];
-} draw_calls;
+	vulkan_buffer vert;
+	vulkan_buffer indx;
+} uploaded_mesh;
 
-void draw(context *ctx, draw_calls info, u32 upcoming_index,
-	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
-	vulkan_buffer ibuf, hw_queue gqueue, orbit_tree *tree,
-	camera *cam)
+uploaded_mesh mesh_upload(context *ctx, mesh m,
+	lifetime *cpuside, lifetime *gpuside)
 {
-	// cpu wait for current frame to be done rendering
-	cpu_fence_wait_one(ctx->device, info.sync.rendering[upcoming_index], UINT64_MAX);
-	vkAcquireNextImageKHR(ctx->device, swap->base.handle, UINT64_MAX,
-		info.sync.present_ready[upcoming_index],
-		VK_NULL_HANDLE, &swap->base.i_slot);
-	// recording commands for next frame
-	vkResetCommandBuffer(info.commands[upcoming_index], 0);
-	VkCommandBuffer cbuf = info.commands[upcoming_index];
-	command_buffer_begin(cbuf, swap);
-	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
-	vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
-	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.handle, &(VkDeviceSize){0});
-	vkCmdBindIndexBuffer(cbuf, ibuf.handle, 0, VK_INDEX_TYPE_UINT32);
-	camera_matrix(cam);
+	vulkan_buffer vert = data_upload(ctx,
+		m.nvert * sizeof(vertex), m.vert,
+		cpuside, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	lifetime_bind_buffer(gpuside, vert);
+	vulkan_buffer indx = data_upload(ctx,
+		m.nindx * sizeof(u32), m.indx,
+		cpuside, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+	lifetime_bind_buffer(gpuside, indx);
+	return (uploaded_mesh){ vert, indx };
+}
+
+void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
+	uploaded_mesh mesh, orbit_tree *tree, camera *cam)
+{
+	// render
 	float now = (float) glfwGetTime();
 	flatten(tree, now);
+	// cpu wait for current frame to be done rendering
+	attached_swapchain_swap_buffers(ctx, sc);
+	// recording commands for next frame
+	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
+	vkResetCommandBuffer(cmd, 0);
+	command_buffer_begin(cmd, sc);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->line);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
+	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vert.handle, &(VkDeviceSize){0});
+	vkCmdBindIndexBuffer(cmd, mesh.indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	for (u32 draw = 1; draw < tree->n_orbit; draw++) {
 		struct push_constant_data pushc;
 		push_constant_populate(&pushc, tree, draw, cam, now);
-		vkCmdPushConstants(cbuf, pipe.layout,
+		vkCmdPushConstants(cmd, pipe->layout,
 			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof(pushc), &pushc);
-		vkCmdDrawIndexed(cbuf, (u32) ibuf.size / sizeof(u32), 1, 0, 0, 0);
+		vkCmdDrawIndexed(cmd, (u32) mesh.indx.size / sizeof(u32), 1, 0, 0, 0);
 	}
 
-	command_buffer_end(cbuf);
+	command_buffer_end(cmd);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &info.sync.present_ready[upcoming_index],
+		.pWaitSemaphores = attached_swapchain_current_present_ready(sc),
 		.pWaitDstStageMask = &(VkPipelineStageFlags){
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 		},
 		.commandBufferCount = 1,
-		.pCommandBuffers = &info.commands[upcoming_index],
+		.pCommandBuffers = &cmd,
 		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &info.sync.render_done[upcoming_index],
+		.pSignalSemaphores = attached_swapchain_current_render_done(sc),
 	};
-	if (vkQueueSubmit(gqueue.handle, 1, &submission_desc,
-		info.sync.rendering[upcoming_index]) != VK_SUCCESS)
+	if (vkQueueSubmit(sc->graphics_queue.handle, 1, &submission_desc,
+		attached_swapchain_current_rendering(sc)) != VK_SUCCESS)
 		crash("vkQueueSubmit");
 	// present rendered image
-	VkPresentInfoKHR present_desc = {
-		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &info.sync.render_done[upcoming_index],
-		.swapchainCount = 1,
-		.pSwapchains = &swap->base.handle,
-		.pImageIndices = &swap->base.i_slot,
-	};
-	vkQueuePresentKHR(gqueue.handle, &present_desc);
+	attached_swapchain_present(sc);
 }
 
 VkSampler sampler_create(context *ctx)
@@ -917,40 +987,12 @@ VkSampler sampler_create(context *ctx)
 static const int WIDTH = 800;
 static const int HEIGHT = 600;
 
-typedef struct {
-	vulkan_buffer vert;
-	vulkan_buffer indx;
-} uploaded_mesh;
-
-uploaded_mesh mesh_upload(context *ctx, mesh m,
-	lifetime *cpuside, lifetime *gpuside)
-{
-	vulkan_buffer vert = data_upload(ctx,
-		m.nvert * sizeof(vertex), m.vert,
-		cpuside, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-	lifetime_bind_buffer(gpuside, vert);
-	vulkan_buffer indx = data_upload(ctx,
-		m.nindx * sizeof(u32), m.indx,
-		cpuside, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-	lifetime_bind_buffer(gpuside, indx);
-	return (uploaded_mesh){ vert, indx };
-}
-
 int main()
 {
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
-	hw_queue gqueue = hw_queue_ref(&ctx, ctx.specs->iq_graphics);
-	VkCommandPool pool = command_pool_create(ctx.device,
-		gqueue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-	draw_calls draws;
-        command_buffer_create(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
-	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.present_ready);
-	gpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.render_done);
-	cpu_fence_create(ctx.device, MAX_FRAMES_RENDERING, draws.sync.rendering, VK_FENCE_CREATE_SIGNALED_BIT);
-
-	lifetime window_lifetime = lifetime_init(&ctx, gqueue, 0, 0);
-	lifetime loading_lifetime = lifetime_init(&ctx, gqueue,
+	lifetime window_lifetime = lifetime_init(&ctx, sc.graphics_queue, 0, 0);
+	lifetime loading_lifetime = lifetime_init(&ctx, sc.graphics_queue,
 		VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
 		| VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, 4);
 	vulkan_bound_image textures = vulkan_bound_image_upload(&ctx,
@@ -967,8 +1009,6 @@ int main()
 	uploaded_mesh um = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
-
-	u32 cpu_frame = 0;
 	orbit_tree tree = orbit_tree_init();
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -3.0f, 2.0f },
@@ -981,10 +1021,8 @@ int main()
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
-		draw(&ctx, draws, cpu_frame % MAX_FRAMES_RENDERING,
-			&sc, pipe, um.vert, um.indx,
-			gqueue, &tree, &cam);
-		cpu_frame++;
+		camera_matrix(&cam);
+		draw(&ctx, &sc, &pipe, um, &tree, &cam);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
@@ -993,13 +1031,6 @@ int main()
 	orbit_tree_fini(&tree);
 
 	vkDeviceWaitIdle(ctx.device);
-	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
-		vkDestroySemaphore(ctx.device, draws.sync.present_ready[i], NULL);
-		vkDestroySemaphore(ctx.device, draws.sync.render_done[i], NULL);
-		vkDestroyFence(ctx.device, draws.sync.rendering[i], NULL);
-	}
-	vkFreeCommandBuffers(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
-	vkDestroyCommandPool(ctx.device, pool, NULL);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
