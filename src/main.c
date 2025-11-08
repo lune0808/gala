@@ -727,8 +727,8 @@ vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
 }
 
 typedef struct {
-	int width;
-	int height;
+	u32 width;
+	u32 height;
 	void *mem;
 } image;
 
@@ -737,7 +737,12 @@ image load_image(const char *path)
 	int w, h, ch;
 	void *ptr = stbi_load(path, &w, &h, &ch, 4);
 	if (!ptr) crash("stbi_load");
-	return (image){ w, h, ptr };
+	return (image){ (u32) w, (u32) h, ptr };
+}
+
+void image_fini(image img)
+{
+	stbi_image_free(img.mem);
 }
 
 u32 mips_for(u32 width, u32 height)
@@ -882,10 +887,7 @@ typedef struct {
 vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
 	vulkan_queue xfer)
 {
-	VkDeviceSize img_size =
-		  (VkDeviceSize) img->width
-		* (VkDeviceSize) img->height
-		* 4ul;
+	VkDeviceSize img_size = img->width * img->height * 4ul;
 	VkDeviceSize size = img_size * (VkDeviceSize) n_img;
 	vulkan_buffer staging = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -897,14 +899,14 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
 		assert(img[i].width  == img[0].width
 		    && img[i].height == img[0].height);
 		memcpy((char*) mapped + i * img_size, img[i].mem, img_size);
-		stbi_image_free(img[i].mem);
+		image_fini(img[i]);
 	}
 	vkUnmapMemory(ctx->device, staging.mem);
 	VkImageCreateInfo vimg_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = VK_FORMAT_R8G8B8A8_SRGB,
-		.extent = { (u32) img->width, (u32) img->height, 1 },
+		.extent = { img->width, img->height, 1 },
 		.mipLevels = 1,
 		.arrayLayers = n_img,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -929,7 +931,7 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
 	image_layout_transition(cmd, &vimg, n_img,
 		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	image_transfer(cmd, staging, &vimg,
-		(u32) img->width, (u32) img->height, n_img);
+		img->width, img->height, n_img);
 	image_layout_transition(cmd, &vimg, n_img,
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -949,18 +951,18 @@ vulkan_image_array images_upload(context *ctx, u32 n_img, image *img,
 
 vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 {
-	VkDeviceSize size = (VkDeviceSize) img.width * (VkDeviceSize) img.height * 4ul;
+	VkDeviceSize size = img.width * img.height * 4ul;
 	vulkan_buffer staging = buffer_create_or_crash(ctx,
 		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	buffer_populate(ctx->device, staging, img.mem);
-	stbi_image_free(img.mem);
+	image_fini(img);
 	VkImageCreateInfo img_desc = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = VK_FORMAT_R8G8B8A8_SRGB,
-		.extent = { (u32) img.width, (u32) img.height, 1 },
-		.mipLevels = mips_for((u32) img.width, (u32) img.height),
+		.extent = { img.width, img.height, 1 },
+		.mipLevels = mips_for(img.width, img.height),
 		.arrayLayers = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.tiling = VK_IMAGE_TILING_OPTIMAL,
@@ -987,7 +989,7 @@ vulkan_image image_upload(context *ctx, image img, vulkan_queue xfer)
 	vkBeginCommandBuffer(cmd, &cmd_begin);
 	image_layout_transition(cmd, &vimg, 1,
 		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	image_transfer(cmd, staging, &vimg, (u32) img.width, (u32) img.height, 1);
+	image_transfer(cmd, staging, &vimg, img.width, img.height, 1);
 	image_mips_transition(cmd, &vimg);
 	VkSubmitInfo submission = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
