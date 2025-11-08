@@ -72,7 +72,7 @@ vulkan_bound_image_view vulkan_bound_image_view_create(context *ctx,
 	VkImageCreateInfo *desc, VkMemoryPropertyFlags memory, VkImageAspectFlags kind)
 {
 	vulkan_image img = vulkan_image_create(ctx, desc, memory);
-	VkImageView view = vulkan_image_view_create(ctx, &img, 1u, kind);
+	VkImageView view = vulkan_image_view_create(ctx, &img, desc->arrayLayers, kind);
 	return (vulkan_bound_image_view){ img, view };
 }
 

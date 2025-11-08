@@ -1139,29 +1139,6 @@ void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
 }
 
-void transforms_upload(void *to, float width, float height, float time)
-{
-	float scl = 0.1f;
-	mat4 model;
-	glm_scale_make(model, (vec3){ scl, scl, scl });
-	glm_rotate(model, time * 2.0f, (vec3){ 1.0f, 0.0f, 0.0f });
-	vec3 offset = { 1.0f, 0.0f, 0.0f };
-	memcpy(model[3], offset, sizeof offset);
-	glm_vec3_rotate(model[3], time * 0.4f, (vec3){ 0.0f, 0.0f, 1.0f });
-	mat4 view;
-	glm_lookat(
-		(vec3){ 2.0f, 2.0f, 2.0f },
-		(vec3){ 0.0f, 0.0f, 0.0f },
-		(vec3){ 0.0f, 0.0f, 1.0f },
-		view
-	);
-	float asp = width / height;
-	mat4 proj;
-	glm_perspective((float) M_PI/4.0f, asp, 0.1f, 10.0f, proj);
-	proj[1][1] *= -1.0f;
-	glm_mat4_mulN((mat4*[]){ &proj, &view, &model }, 3, to);
-}
-
 typedef struct {
 	mat4 tfm;
 	float flat_angle;
@@ -1400,7 +1377,7 @@ int main()
 			gqueue, &tree, &cam);
 		cpu_frame++;
 		double end_time = glfwGetTime();
-		// printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
+		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
