@@ -15,6 +15,8 @@
 #include "gpu.h"
 #include "swapchain.h"
 #include "image.h"
+#include "memory.h"
+#include "hwqueue.h"
 
 VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
@@ -290,55 +292,6 @@ VkDescriptorSet *descr_set_create(VkDevice logical,
 	if (vkAllocateDescriptorSets(logical, &alloc_desc, set) != VK_SUCCESS)
 		crash("vkAllocateDescriptorSets");
 	return set;
-}
-
-u32 constrain_memory_type(context *ctx, u32 allowed, VkMemoryPropertyFlags cons)
-{
-	VkPhysicalDeviceMemoryProperties *props = &ctx->specs->memory;
-	for (u32 i = 0; i < props->memoryTypeCount; i++) {
-		if (allowed & (1u << i)) {
-			if ((props->memoryTypes[i].propertyFlags & cons) == cons) {
-				return i;
-			}
-		}
-	}
-	crash("no suitable memory type available");
-}
-
-typedef struct {
-	VkBuffer buf;
-	VkDeviceMemory mem;
-	VkDeviceSize size;
-} vulkan_buffer;
-
-vulkan_buffer buffer_create(context *ctx,
-	VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags cons)
-{
-	VkBufferCreateInfo buf_desc = {
-		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = size,
-		.usage = usage,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-	};
-	VkBuffer buf;
-	if (vkCreateBuffer(ctx->device, &buf_desc, NULL, &buf) != VK_SUCCESS)
-		crash("vkCreateBuffer");
-	VkMemoryRequirements reqs;
-	vkGetBufferMemoryRequirements(ctx->device, buf, &reqs);
-	VkMemoryAllocateInfo mem_desc = {
-		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-		.allocationSize = reqs.size,
-		.memoryTypeIndex = constrain_memory_type(
-			ctx,
-			reqs.memoryTypeBits,
-			cons
-		),
-	};
-	VkDeviceMemory mem;
-	if (vkAllocateMemory(ctx->device, &mem_desc, NULL, &mem) != VK_SUCCESS)
-		crash("vkAllocateMemory");
-	vkBindBufferMemory(ctx->device, buf, mem, 0);
-	return (vulkan_buffer){ buf, mem, size };
 }
 
 void descr_set_config(VkDevice logical, VkDescriptorSet *set,
@@ -630,300 +583,6 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	return (pipeline){ gpipe, unif_lyt, set_lyt, dpool, set };
 }
 
-typedef struct {
-	VkQueue handle;
-	u32 family_index;
-	u32 queue_index;
-} vulkan_queue;
-
-vulkan_queue vulkan_queue_ref(context *ctx, u32 family_index)
-{
-	VkQueue handle;
-	u32 queue_index = 0;
-	vkGetDeviceQueue(ctx->device, family_index, queue_index, &handle);
-	return (vulkan_queue){ handle, family_index, queue_index };
-}
-
-VkCommandPool command_pool_create(VkDevice logical,
-	vulkan_queue queue, VkCommandPoolCreateFlags flags)
-{
-	VkCommandPoolCreateInfo pool_desc = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = flags,
-		.queueFamilyIndex = queue.family_index,
-	};
-	VkCommandPool pool;
-	if (vkCreateCommandPool(logical, &pool_desc, NULL, &pool) != VK_SUCCESS)
-		crash("vkCreateCommandPool");
-	return pool;
-}
-
-void buffer_populate(VkDevice logical, vulkan_buffer b, const void *data)
-{
-	void *mapped;
-	vkMapMemory(logical, b.mem, 0, b.size, 0, &mapped);
-	memcpy(mapped, data, b.size);
-	vkUnmapMemory(logical, b.mem);
-}
-
-void command_buffer_create(VkDevice logical, VkCommandPool pool,
-	u32 cnt, VkCommandBuffer *cmd)
-{
-	VkCommandBufferAllocateInfo buf_desc = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = pool,
-		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-		.commandBufferCount = cnt,
-	};
-	if (vkAllocateCommandBuffers(logical, &buf_desc, cmd) != VK_SUCCESS)
-		crash("vkCreateCommandBuffers");
-}
-
-// TODO: yuck
-void data_transfer(VkDevice logical, vulkan_buffer dst, vulkan_buffer src,
-	vulkan_queue xfer)
-{
-	VkCommandPool pool = command_pool_create(logical,
-		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
-	VkCommandBuffer cmd;
-	command_buffer_create(logical, pool, 1, &cmd);
-	VkCommandBufferBeginInfo cmd_begin = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	};
-	vkBeginCommandBuffer(cmd, &cmd_begin);
-	VkBufferCopy copy_desc = {
-		.srcOffset = 0,
-		.dstOffset = 0,
-		.size = dst.size,
-	};
-	vkCmdCopyBuffer(cmd, src.buf, dst.buf, 1, &copy_desc);
-	vkEndCommandBuffer(cmd);
-	VkSubmitInfo submission = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &cmd,
-	};
-	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
-	vkQueueWaitIdle(xfer.handle);
-	vkFreeCommandBuffers(logical, pool, 1, &cmd);
-	vkDestroyCommandPool(logical, pool, NULL);
-}
-
-vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
-	vulkan_queue xfer, VkBufferUsageFlags usage)
-{
-	vulkan_buffer staging = buffer_create(ctx,
-		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	buffer_populate(ctx->device, staging, data);
-	vulkan_buffer uploaded = buffer_create(ctx,
-		size, VK_BUFFER_USAGE_TRANSFER_DST_BIT|usage,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	data_transfer(ctx->device, uploaded, staging, xfer);
-	vkDestroyBuffer(ctx->device, staging.buf, NULL);
-	vkFreeMemory(ctx->device, staging.mem, NULL);
-	return uploaded;
-}
-
-void image_layout_transition(VkCommandBuffer cmd, vulkan_bound_image *img,
-	VkImageLayout prev, VkImageLayout next)
-{
-	VkImageMemoryBarrier barrier = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.oldLayout = prev,
-		.newLayout = next,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.image = img->handle,
-		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.subresourceRange.baseMipLevel = 0,
-		.subresourceRange.levelCount = img->mips,
-		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = img->n_img,
-	};
-	VkPipelineStageFlags rel_stg, acq_stg;
-	if (prev == VK_IMAGE_LAYOUT_UNDEFINED) {
-		rel_stg = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-		barrier.srcAccessMask = 0;
-	} else if (prev == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-		rel_stg = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	} else {
-		crash("unimplemented image transition source");
-	}
-	if (next == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
-		acq_stg = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-	} else if (next == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-		acq_stg = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-	} else {
-		crash("unimplemented image transition destination");
-	}
-	vkCmdPipelineBarrier(cmd,
-		rel_stg, acq_stg, 0 /* TODO: VK_DEPENDENCY_BY_REGION_BIT */,
-		0, NULL, 0, NULL, 1, &barrier);
-}
-
-void image_transfer(VkCommandBuffer cmd, vulkan_buffer buf, vulkan_bound_image *img)
-{
-	VkBufferImageCopy region = {
-		.bufferOffset = 0,
-		.bufferRowLength = 0,
-		.bufferImageHeight = 0,
-		.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.imageSubresource.mipLevel = 0,
-		.imageSubresource.baseArrayLayer = 0,
-		.imageSubresource.layerCount = img->n_img,
-		.imageOffset = {0, 0, 0},
-		.imageExtent = {img->dim.width, img->dim.height, 1},
-	};
-	vkCmdCopyBufferToImage(cmd, buf.buf, img->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-}
-
-void image_mips_transition(VkCommandBuffer cmd, vulkan_bound_image *img)
-{
-	VkImageMemoryBarrier barrier = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-		.image = img->handle,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.subresourceRange.baseArrayLayer = 0,
-		.subresourceRange.layerCount = img->n_img,
-		.subresourceRange.levelCount = 1,
-	};
-	VkImageBlit blit_desc = {
-		.srcOffsets[0] = { 0, 0, 0 },
-		.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.srcSubresource.baseArrayLayer = 0,
-		.srcSubresource.layerCount = img->n_img,
-		.dstOffsets[0] = { 0, 0, 0 },
-		.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.dstSubresource.baseArrayLayer = 0,
-		.dstSubresource.layerCount = img->n_img,
-	};
-	i32 mip_w = (i32) img->dim.width;
-	i32 mip_h = (i32) img->dim.height;
-	for (u32 mip = 0; mip < img->mips-1; mip++) {
-		// transition mip into src layout
-		barrier.subresourceRange.baseMipLevel = mip;
-		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-		barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-		vkCmdPipelineBarrier(cmd,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-			0, 0, NULL, 0, NULL, 1, &barrier
-		);
-		// blit mip into next mip
-		i32 new_mip_w = (mip_w > 1)? mip_w/2: 1;
-		i32 new_mip_h = (mip_h > 1)? mip_h/2: 1;
-		blit_desc.srcOffsets[1] = (VkOffset3D){ mip_w, mip_h, 1 };
-		blit_desc.srcSubresource.mipLevel = mip;
-		blit_desc.dstOffsets[1] = (VkOffset3D){ new_mip_w, new_mip_h, 1 };
-		blit_desc.dstSubresource.mipLevel = mip + 1;
-		vkCmdBlitImage(cmd,
-			img->handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			img->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			1, &blit_desc, VK_FILTER_LINEAR);
-		// wait and transition mip into final state
-		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-		vkCmdPipelineBarrier(cmd,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-			0, 0, NULL, 0, NULL, 1, &barrier
-		);
-		mip_w = new_mip_w;
-		mip_h = new_mip_h;
-	}
-	// transition last mip into final state
-	barrier.subresourceRange.baseMipLevel = img->mips - 1;
-	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-	barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-	barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-	vkCmdPipelineBarrier(cmd,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-		0, 0, NULL, 0, NULL, 1, &barrier
-	);
-}
-
-vulkan_bound_image images_upload(context *ctx, u32 n_img, loaded_image *img,
-	vulkan_queue xfer)
-{
-	u32 width = img->width;
-	u32 height = img->height;
-	VkDeviceSize img_size = width * height * 4ul;
-	VkDeviceSize size = img_size * (VkDeviceSize) n_img;
-	vulkan_buffer staging = buffer_create(ctx,
-		size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-		| VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	void *mapped;
-	vkMapMemory(ctx->device, staging.mem, 0, size, 0, &mapped);
-	for (u32 i = 0; i < n_img; i++) {
-		assert(img[i].width  == width
-		    && img[i].height == height);
-		memcpy((char*) mapped + i * img_size, img[i].mem, img_size);
-		loaded_image_fini(img[i]);
-	}
-	vkUnmapMemory(ctx->device, staging.mem);
-	VkImageCreateInfo vimg_desc = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
-		.format = VK_FORMAT_R8G8B8A8_SRGB,
-		.extent = { img->width, img->height, 1 },
-		.mipLevels = mips_for(img->width, img->height),
-		.arrayLayers = n_img,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT
-		       | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-		       | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-	};
-	vulkan_bound_image vimg = vulkan_bound_image_create(ctx,
-		&vimg_desc, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-		VK_IMAGE_ASPECT_COLOR_BIT);
-	VkCommandPool pool = command_pool_create(ctx->device,
-		xfer, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
-	VkCommandBuffer cmd;
-	command_buffer_create(ctx->device, pool, 1, &cmd);
-	VkCommandBufferBeginInfo cmd_begin = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	};
-	vkBeginCommandBuffer(cmd, &cmd_begin);
-	image_layout_transition(cmd, &vimg,
-		VK_IMAGE_LAYOUT_UNDEFINED,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-	VkFormatProperties props;
-	vkGetPhysicalDeviceFormatProperties(
-		ctx->physical_device, vimg.fmt, &props);
-	if (!(props.optimalTilingFeatures
-	    & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
-		crash("vkCmdBlitImage not available for mipmap generation");
-	image_transfer(cmd, staging, &vimg);
-	image_mips_transition(cmd, &vimg);
-	vkEndCommandBuffer(cmd);
-	VkSubmitInfo submission = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &cmd,
-	};
-	vkQueueSubmit(xfer.handle, 1, &submission, VK_NULL_HANDLE);
-	vkQueueWaitIdle(xfer.handle);
-	vkDestroyBuffer(ctx->device, staging.buf, NULL);
-	vkFreeMemory(ctx->device, staging.mem, NULL);
-	vkDestroyCommandPool(ctx->device, pool, NULL);
-	return vimg;
-}
-
 void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
 {
 	VkCommandBufferBeginInfo cmd_desc = {
@@ -971,11 +630,14 @@ void sync_create(VkDevice logical, u32 cnt,
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
 	for (u32 i = 0; i < cnt; i++) {
-		if (vkCreateSemaphore(logical, &sem_desc, NULL, &present_ready[i]) != VK_SUCCESS)
+		if (vkCreateSemaphore(logical,
+			&sem_desc, NULL, &present_ready[i]) != VK_SUCCESS)
 			crash("vkCreateSemaphore");
-		if (vkCreateSemaphore(logical, &sem_desc, NULL, &render_done[i]) != VK_SUCCESS)
+		if (vkCreateSemaphore(logical,
+			&sem_desc, NULL, &render_done[i]) != VK_SUCCESS)
 			crash("vkCreateSemaphore");
-		if (vkCreateFence(logical, &fence_desc, NULL, &rendering[i]) != VK_SUCCESS)
+		if (vkCreateFence(logical,
+			&fence_desc, NULL, &rendering[i]) != VK_SUCCESS)
 			crash("vkCreateFence");
 	}
 }
@@ -1169,7 +831,7 @@ typedef struct {
 
 void draw(context *ctx, draw_calls info, u32 upcoming_index,
 	attached_swapchain *swap, pipeline pipe, vulkan_buffer vbuf,
-	vulkan_buffer ibuf, vulkan_queue gqueue, orbit_tree *tree,
+	vulkan_buffer ibuf, hw_queue gqueue, orbit_tree *tree,
 	camera *cam)
 {
 	// cpu wait for current frame to be done rendering
@@ -1185,8 +847,8 @@ void draw(context *ctx, draw_calls info, u32 upcoming_index,
 	vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.line);
 	vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		pipe.layout, 0, 1, &pipe.set[upcoming_index], 0, NULL);
-	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.buf, &(VkDeviceSize){0});
-	vkCmdBindIndexBuffer(cbuf, ibuf.buf, 0, VK_INDEX_TYPE_UINT32);
+	vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.handle, &(VkDeviceSize){0});
+	vkCmdBindIndexBuffer(cbuf, ibuf.handle, 0, VK_INDEX_TYPE_UINT32);
 	camera_matrix(cam);
 	float now = (float) glfwGetTime();
 	flatten(tree, now);
@@ -1261,8 +923,8 @@ int main()
 {
 	context ctx = context_init(WIDTH, HEIGHT, "Gala");
 	attached_swapchain sc = attached_swapchain_create(&ctx);
-	vulkan_queue gqueue = vulkan_queue_ref(&ctx, ctx.specs->iq_graphics);
-	vulkan_bound_image textures = images_upload(&ctx,
+	hw_queue gqueue = hw_queue_ref(&ctx, ctx.specs->iq_graphics);
+	vulkan_bound_image textures = vulkan_bound_image_upload(&ctx,
 		2, (loaded_image[]){
 			load_image("res/2k_venus_surface.jpg"),
 			load_image("res/2k_mercury.jpg"),
@@ -1315,9 +977,9 @@ int main()
 	vkFreeCommandBuffers(ctx.device, pool, MAX_FRAMES_RENDERING, draws.commands);
 	vkDestroyCommandPool(ctx.device, pool, NULL);
 	vkFreeMemory(ctx.device, ibuf.mem, NULL);
-	vkDestroyBuffer(ctx.device, ibuf.buf, NULL);
+	vkDestroyBuffer(ctx.device, ibuf.handle, NULL);
 	vkFreeMemory(ctx.device, vbuf.mem, NULL);
-	vkDestroyBuffer(ctx.device, vbuf.buf, NULL);
+	vkDestroyBuffer(ctx.device, vbuf.handle, NULL);
 	mesh_fini(&m);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
