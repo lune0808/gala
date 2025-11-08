@@ -8,7 +8,7 @@ loaded_image load_image(const char *path)
 {
 	int w, h, ch;
 	void *ptr = stbi_load(path, &w, &h, &ch, 4);
-	if (!ptr) crash("stbi_load");
+	if (!ptr) crash("stbi_load(\"%s\")", path);
 	return (loaded_image){ (u32) w, (u32) h, ptr };
 }
 
