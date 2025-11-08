@@ -4,6 +4,7 @@
 #include <stb/stb_image.h>
 #include "image.h"
 #include "util.h"
+#include "lifetime.h"
 
 
 loaded_image load_image(const char *path)

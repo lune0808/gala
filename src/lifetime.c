@@ -31,7 +31,16 @@ lifetime lifetime_init(context *ctx, hw_queue q,
 
 	l.n_buf = 0;
 	l.c_buf = 1 * sizeof(*l.buf);
-	l.buf = xmalloc(l.c_buf * sizeof(*l.buf));
+	l.buf = xmalloc(l.c_buf);
+
+	l.n_img = 0;
+	l.c_img = 1 * sizeof(*l.img);
+	l.img = xmalloc(l.c_img);
+
+	l.n_sm = 0;
+	l.c_sm = 1 * sizeof(*l.sm);
+	l.sm = xmalloc(l.c_sm);
+
 	return l;
 }
 
@@ -44,6 +53,12 @@ void lifetime_fini(lifetime *l, context *ctx)
 	for (u32 i = 0; i < l->n_buf; i++) {
 		vkDestroyBuffer(ctx->device, l->buf[i].handle, NULL);
 		vkFreeMemory(ctx->device, l->buf[i].mem, NULL);
+	}
+	for (u32 i = 0; i < l->n_img; i++) {
+		vulkan_bound_image_destroy(ctx, &l->img[i]);
+	}
+	for (u32 i = 0; i < l->n_sm; i++) {
+		vkDestroySampler(ctx->device, l->sm[i], NULL);
 	}
 	free(l->buf);
 	if (l->n_cmd > 0) {
@@ -81,5 +96,17 @@ void lifetime_bind_buffer(lifetime *l, vulkan_buffer buf)
 {
 	buffer_fit((void**) &l->buf, l->n_buf * sizeof(*l->buf), &l->c_buf);
 	l->buf[l->n_buf++] = buf;
+}
+
+void lifetime_bind_image(lifetime *l, vulkan_bound_image img)
+{
+	buffer_fit((void**) &l->img, l->n_img * sizeof(*l->img), &l->c_img);
+	l->img[l->n_img++] = img;
+}
+
+void lifetime_bind_sampler(lifetime *l, VkSampler sm)
+{
+	buffer_fit((void**) &l->sm, l->n_sm * sizeof(*l->sm), &l->c_sm);
+	l->sm[l->n_sm++] = sm;
 }
 

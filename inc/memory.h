@@ -4,6 +4,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include "gpu.h"
+struct lifetime; // circular dependency
 
 
 u32 constrain_memory_type(context *ctx, u32 allowed,
@@ -21,7 +22,6 @@ vulkan_buffer buffer_create(context *ctx,
 
 void *buffer_map(context *ctx, vulkan_buffer buf);
 void buffer_unmap(context *ctx, vulkan_buffer buf);
-struct lifetime; // circular dependency
 vulkan_buffer data_upload(context *ctx, VkDeviceSize size, const void *data,
 	struct lifetime *l, VkBufferUsageFlags usage);
 

@@ -937,7 +937,9 @@ int main()
 			load_image("res/2k_venus_surface.jpg"),
 			load_image("res/2k_mercury.jpg"),
 		}, &loading_lifetime);
+	lifetime_bind_image(&window_lifetime, textures);
 	VkSampler sampler = sampler_create(&ctx);
+	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
 	mesh m = uv_sphere(16, 12, 0.5f);
@@ -991,8 +993,6 @@ int main()
 	mesh_fini(&m);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
-	vkDestroySampler(ctx.device, sampler, NULL);
-	vulkan_bound_image_destroy(&ctx, &textures);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
 	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
 	lifetime_fini(&window_lifetime, &ctx);
