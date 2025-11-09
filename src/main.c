@@ -160,13 +160,24 @@ typedef struct {
 	u32 nindx;
 } mesh;
 
-mesh uv_sphere(u32 nx, u32 ny, float r)
+u32 uv_sphere_vert_size(u32 nx, u32 ny)
+{
+	u32 nvert_quads = (nx + 1) * ny;
+	u32 nvert = nvert_quads + 2 * nx;
+	return nvert * sizeof(vertex);
+}
+
+u32 uv_sphere_indx_size(u32 nx, u32 ny)
+{
+	u32 nindx = 6 * nx * (ny - 1) + 2 * 3 * nx;
+	return nindx * sizeof(u32);
+}
+
+mesh uv_sphere(u32 nx, u32 ny, float r, vertex *vert, u32 *indx)
 {
 	u32 nvert_quads = (nx + 1) * ny;
 	u32 nvert = nvert_quads + 2 * nx;
 	u32 nindx = 6 * nx * (ny - 1) + 2 * 3 * nx;
-	char *mem = xmalloc(nvert * sizeof(vertex) + nindx * sizeof(u32));
-	vertex *vert = (void*) mem;
 	vertex *vcur = vert;
 	for (u32 iy = 0; iy < ny; iy++) {
 		float angley = (float) M_PI * (float) (iy + 1) / (float) (ny + 1);
@@ -198,7 +209,6 @@ mesh uv_sphere(u32 nx, u32 ny, float r)
 	for (vcur = vert; vcur != vert + nvert; vcur++) {
 		glm_normalize_to(vcur->position, vcur->normal);
 	}
-	u32 *indx = (void*) (mem + nvert * sizeof(vertex));
 	u32 *icur = indx;
 	u32 ivert = 0;
 	for (u32 irow = 0; irow < ny - 1; irow++) {
@@ -222,11 +232,6 @@ mesh uv_sphere(u32 nx, u32 ny, float r)
 		*icur++ = nvert_quads - nx + ipole - 1;
 	}
 	return (mesh){ vert, indx, nvert, nindx };
-}
-
-void mesh_fini(mesh *m)
-{
-	free(m->vert);
 }
 
 VkShaderStageFlagBits shader_stage_from_name(const char *path)
@@ -843,20 +848,35 @@ void push_constant_populate(struct push_constant_data *pushc, camera *cam)
 typedef struct {
 	vulkan_buffer vert;
 	vulkan_buffer indx;
+	u32 *vbase;
+	u32 *ibase;
+	u32 n_mesh;
 } uploaded_mesh;
 
-uploaded_mesh mesh_upload(context *ctx, mesh m,
+uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 	lifetime *cpuside, lifetime *gpuside)
 {
+	char *mem = xmalloc((n_mesh + 1) * sizeof(u32) * 2);
+	u32 *vbase = (void*) mem;
+	u32 *ibase = (void*) (mem + (n_mesh + 1) * sizeof(u32));
+	vbase[0] = 0;
+	ibase[0] = 0;
+	for (u32 i = 0; i < n_mesh; i++) {
+		for (u32 ii = 0; ii < m[i].nindx; ii++) {
+			m[i].indx[ii] += vbase[i];
+		}
+		vbase[i + 1] = vbase[i] + m[i].nvert;
+		ibase[i + 1] = ibase[i] + m[i].nindx;
+	}
 	vulkan_buffer vert = data_upload(ctx,
-		m.nvert * sizeof(vertex), m.vert,
+		vbase[n_mesh] * sizeof(vertex), m[0].vert,
 		cpuside, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 	lifetime_bind_buffer(gpuside, vert);
 	vulkan_buffer indx = data_upload(ctx,
-		m.nindx * sizeof(u32), m.indx,
+		ibase[n_mesh] * sizeof(u32), m[0].indx,
 		cpuside, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 	lifetime_bind_buffer(gpuside, indx);
-	return (uploaded_mesh){ vert, indx };
+	return (uploaded_mesh){ vert, indx, vbase, ibase, n_mesh };
 }
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
@@ -868,7 +888,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	u32 ilod[5];
 	u32 nlod = flatten(tree, now, dt, cam, ilod);
 	float render_time = (float) glfwGetTime() - now;
-	printf("    cpu render:%.2fms   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ",
+	printf("    cpu render:%.2fms   l0:%6u   l1:%6u   l2:%6u   l3:%6u   l4:%6u   ",
 		render_time * 1e3f, ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
 
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
@@ -887,17 +907,23 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam);
 	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
+	VkBuffer buffers[] = { mesh->vert.handle, instbuf.handle };
+	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
+	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+	vkCmdPushConstants(cmd, pipe->layout,
+		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof(pushc), &pushc);
 	for (u32 iilod = 0; iilod < nlod; iilod++) {
 		if (ilod[iilod] == ilod[iilod+1])
 			continue;
-		vkCmdBindIndexBuffer(cmd, mesh[iilod].indx.handle, 0, VK_INDEX_TYPE_UINT32);
-		VkBuffer buffers[] = { mesh[iilod].vert.handle, instbuf.handle };
-		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
-		pushc.lod = (float) iilod;
-		vkCmdPushConstants(cmd, pipe->layout,
-			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-			0, sizeof(pushc), &pushc);
-		vkCmdDrawIndexed(cmd, (u32) mesh[iilod].indx.size / sizeof(u32), ilod[iilod+1] - ilod[iilod], 0, 0, ilod[iilod]);
+		assert(mesh->ibase[iilod+1] - mesh->ibase[iilod] < (1u<<20));
+		vkCmdDrawIndexed(cmd,
+			mesh->ibase[iilod+1] - mesh->ibase[iilod],
+			ilod[iilod+1] - ilod[iilod],
+			mesh->ibase[iilod],
+			0,
+			0
+		);
 	}
 	command_buffer_end(cmd);
 
@@ -980,23 +1006,21 @@ int main()
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
-	uploaded_mesh lod[4];
-	mesh m = uv_sphere(64, 48, 0.5f);
-	lod[0] = mesh_upload(&ctx, m,
+	u32 vertsz = uv_sphere_vert_size(64, 48) + uv_sphere_vert_size(16, 12)
+		   + uv_sphere_vert_size( 6,  3) + uv_sphere_vert_size( 3,  2);
+	u32 indxsz = uv_sphere_indx_size(64, 48) + uv_sphere_indx_size(16, 12)
+		   + uv_sphere_indx_size( 6,  3) + uv_sphere_indx_size( 3,  2);
+	char *mesh_storage = xmalloc(vertsz + indxsz);
+	char *mesh_indx = mesh_storage + vertsz;
+	mesh m[4];
+	m[0] = uv_sphere(64, 48, 0.5f, (void*) mesh_storage, (void*) mesh_indx);
+	m[1] = uv_sphere(16, 12, 0.5f, m[0].vert + m[0].nvert, m[0].indx + m[0].nindx);
+	m[2] = uv_sphere( 6,  3, 0.5f, m[1].vert + m[1].nvert, m[1].indx + m[1].nindx);
+	m[3] = uv_sphere( 3,  2, 0.5f, m[2].vert + m[2].nvert, m[2].indx + m[2].nindx);
+	// MUST BE CONTIGUOUS
+	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
 		&loading_lifetime, &window_lifetime);
-	mesh_fini(&m);
-	m = uv_sphere(16, 12, 0.5f);
-	lod[1] = mesh_upload(&ctx, m,
-		&loading_lifetime, &window_lifetime);
-	mesh_fini(&m);
-	m = uv_sphere(6, 3, 0.5f);
-	lod[2] = mesh_upload(&ctx, m,
-		&loading_lifetime, &window_lifetime);
-	mesh_fini(&m);
-	m = uv_sphere(3, 2, 0.5f);
-	lod[3] = mesh_upload(&ctx, m,
-		&loading_lifetime, &window_lifetime);
-	mesh_fini(&m);
+	free(mesh_storage);
 	orbit_tree tree = orbit_tree_init(1u << 16);
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -12.0f, 2.0f },
@@ -1016,13 +1040,14 @@ int main()
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped, dt);
+		draw(&ctx, &sc, &pipe, &lods, &tree, &cam, instbuf, mapped, dt);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
 	orbit_tree_fini(&tree);
+	free(lods.vbase);
 
 	vkDeviceWaitIdle(ctx.device);
 	vkDestroyBuffer(ctx.device, instbuf.handle, NULL);
