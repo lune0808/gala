@@ -650,9 +650,13 @@ void perspective_divide(vec4 h, vec3 v)
 
 bool in_clip(vec3 clip)
 {
-	return in_interval(clip[0], -1.0f, +1.0f)
-	    && in_interval(clip[1], -1.0f, +1.0f)
-	    && in_interval(clip[2],  0.0f,  1.0f);
+	// allow for a bit of extra stuff to be rendered
+	// so that if the camera turns fast it is still
+	// shown
+	const float edge = 1.1f;
+	return in_interval(clip[0], -edge, +edge)
+	    && in_interval(clip[1], -edge, +edge)
+	    && in_interval(clip[2],  0.0f,  edge);
 }
 
 bool visible(orbiting *node, mat4 model, camera *cam)
@@ -828,7 +832,9 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 				break;
 		}
 	}
-	printf("   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ", ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
+	float render_time = (float) glfwGetTime() - now;
+	printf("    cpu render:%.2fms   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ",
+		render_time * 1e3f, ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
 
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
 	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
