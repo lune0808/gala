@@ -820,10 +820,8 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 5e4f };
 	for (u32 i = 0; i < n_visible; i++) {
 		u32 sorted = tree->index[i];
-		float d2 = glm_vec3_distance2(cam->pos, tree->worldpos[sorted]);
-		float s = tree->worldpos[sorted][3];
-		assert(s > 0.0f);
-		if (d2 / (s * s) > dist2_max[iilod-1]) {
+		float sortkey = tree->sortkey[sorted];
+		if (sortkey > dist2_max[iilod-1]) {
 			ilod[iilod++] = i;
 			if (iilod == ARRAY_SIZE(ilod)-1)
 				break;
