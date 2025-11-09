@@ -735,7 +735,7 @@ u32 flatten(orbit_tree *tree, float time, float dt, camera *cam, u32 *ilod)
 				orbit_tree_index(tree, sorted, dt, tree->tfm[n_visible]);
 			} else {
 				memcpy(tree->tfm[n_visible], pos, sizeof(mat4));
-				tree->tfm[n_visible][3][3] = (float) tree->tex[i];
+				tree->tfm[n_visible][3][3] = (float) tree->tex[sorted];
 			}
 			n_visible++;
 		}
