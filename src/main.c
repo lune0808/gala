@@ -881,7 +881,8 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	uploaded_mesh *mesh, orbit_tree *tree, camera *cam,
-	vulkan_buffer instbuf, char *mapped, float dt)
+	vulkan_buffer instbuf, char *mapped, float dt,
+	vulkan_buffer drawbuf, VkDrawIndexedIndirectCommand *draws)
 {
 	// render
 	float now = (float) glfwGetTime();
@@ -900,6 +901,16 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	// recording commands for next frame
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
+	for (u32 iilod = 0; iilod < nlod; iilod++) {
+		if (ilod[iilod] == ilod[iilod+1])
+			continue;
+		assert(mesh->ibase[iilod+1] - mesh->ibase[iilod] < (1u<<20));
+		draws[iilod].indexCount = mesh->ibase[iilod+1] - mesh->ibase[iilod];
+		draws[iilod].instanceCount = ilod[iilod+1] - ilod[iilod];
+		draws[iilod].firstIndex = mesh->ibase[iilod];
+		draws[iilod].vertexOffset = 0;
+		draws[iilod].firstInstance = 0;
+	}
 	command_buffer_begin(cmd, sc);
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -913,18 +924,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	vkCmdPushConstants(cmd, pipe->layout,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		0, sizeof(pushc), &pushc);
-	for (u32 iilod = 0; iilod < nlod; iilod++) {
-		if (ilod[iilod] == ilod[iilod+1])
-			continue;
-		assert(mesh->ibase[iilod+1] - mesh->ibase[iilod] < (1u<<20));
-		vkCmdDrawIndexed(cmd,
-			mesh->ibase[iilod+1] - mesh->ibase[iilod],
-			ilod[iilod+1] - ilod[iilod],
-			mesh->ibase[iilod],
-			0,
-			0
-		);
-	}
+	vkCmdDrawIndexedIndirect(cmd, drawbuf.handle, sc->frame_indx * sizeof(*draws) * 4, 4, sizeof(*draws));
 	command_buffer_end(cmd);
 
 	// submitting commands for next frame
@@ -1034,13 +1034,22 @@ int main()
 		MAX_FRAMES_RENDERING * tree.n_orbit * sizeof(mat4),
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	lifetime_bind_buffer(&window_lifetime, instbuf);
 	void *mapped = buffer_map(&ctx, instbuf);
+	vulkan_buffer drawbuf = buffer_create(&ctx,
+		MAX_FRAMES_RENDERING * sizeof(VkDrawIndexedIndirectCommand) * ARRAY_SIZE(m),
+		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	lifetime_bind_buffer(&window_lifetime, drawbuf);
+	VkDrawIndexedIndirectCommand *drawmapped = buffer_map(&ctx, drawbuf);
 
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, &lods, &tree, &cam, instbuf, mapped, dt);
+		draw(&ctx, &sc, &pipe, &lods, &tree,
+			&cam, instbuf, mapped, dt,
+			drawbuf, &drawmapped[sc.frame_indx * ARRAY_SIZE(m)]);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
@@ -1050,8 +1059,6 @@ int main()
 	free(lods.vbase);
 
 	vkDeviceWaitIdle(ctx.device);
-	vkDestroyBuffer(ctx.device, instbuf.handle, NULL);
-	vkFreeMemory(ctx.device, instbuf.mem, NULL);
 	vkDestroyPipeline(ctx.device, pipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
 	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
