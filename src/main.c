@@ -497,7 +497,6 @@ typedef struct {
 	u32 n_orbit;
 	vec4 *worldpos;
 	orbiting *orbit_specs;
-	float *scale;
 	u32 *index;
 	mat4 *tfm;
 } orbit_tree;
@@ -553,16 +552,15 @@ orbit_tree orbit_tree_init(u32 cnt)
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
-	float *scale = xmalloc(n_orbit * sizeof(float));
 	orbit_specs[0] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
-	scale[0] = 0.0f;
+	worldpos[0][3] = 0.0f;
 	orbit_specs[1] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, 0 };
-	scale[1] = 1.0f;
+	worldpos[1][3] = 1.0f;
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
 		rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
-		scale[i] = rand_float(1.0f/64.0f, 1.0f/8.0f);
+		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f);
 		rand_vec3_dir(0.0f, 1.0f/96.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f);
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
@@ -572,14 +570,13 @@ orbit_tree orbit_tree_init(u32 cnt)
 	for (u32 i = 0; i < n_orbit; i++) {
 		parent[i] = i;
 	}
-	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, scale, parent, xmalloc(n_orbit * sizeof(mat4)) };
+	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)) };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
 {
 	free(tree->worldpos);
 	free(tree->tfm);
-	free(tree->scale);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -601,7 +598,7 @@ void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
 {
 	orbiting *orbit = &tree->orbit_specs[i];
 	glm_rotate_make(dest, orbit->self_speed * time, orbit->self_axis);
-	float scale = tree->scale[i];
+	float scale = tree->worldpos[i][3];
 	glm_scale(dest, (vec3){ scale, scale, scale });
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
 	dest[3][3] = (float) (i & 1);
@@ -662,7 +659,6 @@ bool visible(float scl, mat4 model, camera *cam)
 
 struct orbit_tree_sorting_data {
 	vec4 *worldpos;
-	float *scale;
 	vec3 cam_pos;
 };
 
@@ -673,8 +669,8 @@ int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
 	const u32 r = *(u32*) r_;
 	float dl2 = glm_vec3_distance2(data->cam_pos, data->worldpos[l]);
 	float dr2 = glm_vec3_distance2(data->cam_pos, data->worldpos[r]);
-	float sl = data->scale[l];
-	float sr = data->scale[r];
+	float sl = data->worldpos[l][3];
+	float sr = data->worldpos[r][3];
 	float diff = dl2 / (sl * sl) - dr2 / (sr * sr);
 	if (diff < 0.0f) {
 		return -1;
@@ -688,8 +684,8 @@ int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
 u32 flatten(orbit_tree *tree, float time, camera *cam)
 {
 	// fast
-	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
 	for (u32 i = 0; i < tree->n_orbit; i++) {
+		memset(tree->worldpos[i], 0, sizeof(vec3));
 		tree->index[i] = i;
 	}
 	// not fast
@@ -702,7 +698,6 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 	}
 	// slow
 	struct orbit_tree_sorting_data data;
-	data.scale = tree->scale;
 	data.worldpos = tree->worldpos;
 	memcpy(data.cam_pos, cam->pos, sizeof(vec3));
 	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, &data);
@@ -712,7 +707,7 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 		u32 sorted = tree->index[i];
 		assert(sorted < tree->n_orbit && sorted != 0);
 		orbit_tree_index(tree, sorted, time, tree->tfm[n_visible]);
-		if (visible(tree->scale[sorted], tree->tfm[n_visible], cam)) {
+		if (visible(tree->worldpos[sorted][3], tree->tfm[n_visible], cam)) {
 			n_visible++;
 		}
 	}
@@ -837,7 +832,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	for (u32 i = 0; i < n_visible; i++) {
 		u32 sorted = tree->index[i];
 		float d2 = glm_vec3_distance2(cam->pos, tree->worldpos[sorted]);
-		float s = tree->scale[sorted];
+		float s = tree->worldpos[sorted][3];
 		assert(s > 0.0f);
 		if (d2 / (s * s) > dist2_max[iilod-1]) {
 			ilod[iilod++] = i;
