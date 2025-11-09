@@ -671,11 +671,9 @@ int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
 	float dr2 = glm_vec3_distance2(data->cam_pos, data->worldpos[r]);
 	float sl = data->worldpos[l][3];
 	float sr = data->worldpos[r][3];
-	float diff = dl2 / (sl * sl) - dr2 / (sr * sr);
+	float diff = dl2 * sr * sr - dr2 * sl * sl;
 	if (diff < 0.0f) {
 		return -1;
-	} else if (diff == 0.0f) {
-		return 0;
 	} else {
 		return +1;
 	}
