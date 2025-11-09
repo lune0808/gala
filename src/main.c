@@ -603,7 +603,9 @@ int orbit_tree_node_cmp(const void *l_, const void *r_)
 	const u32 *r = r_;
 	float dl2 = glm_vec3_distance2(camera_pos, tree->worldpos[*l]);
 	float dr2 = glm_vec3_distance2(camera_pos, tree->worldpos[*r]);
-	float diff = dl2 - dr2;
+	float sl = tree->orbit_specs[*l].scale;
+	float sr = tree->orbit_specs[*r].scale;
+	float diff = dl2 / (sl * sl) - dr2 / (sr * sr);
 	if (diff < 0.0f) {
 		return -1;
 	} else if (diff == 0.0f) {
@@ -754,11 +756,17 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	float now = (float) glfwGetTime();
 	memcpy(global_camera_position, cam->pos, sizeof(vec3));
 	flatten(tree, now);
-	u32 ilod;
-	for (ilod = 0; ilod < tree->n_orbit; ilod++) {
-		float z2 = glm_vec3_distance2(cam->pos, tree->tfm[ilod][3]);
-		if (z2 > 20.0f) {
-			break;
+	u32 ilod[4];
+	ilod[0] = 0;
+	ilod[ARRAY_SIZE(ilod)-1] = tree->n_orbit;
+	u32 iilod = 1;
+	float dist2_max[2] = { 25.0f, 100.0f };
+	for (u32 i = 0; i < tree->n_orbit; i++) {
+		float d2 = glm_vec3_distance2(cam->pos, tree->tfm[i][3]);
+		if (d2 > dist2_max[iilod-1]) {
+			ilod[iilod++] = i;
+			if (iilod == ARRAY_SIZE(ilod)-1)
+				break;
 		}
 	}
 
@@ -781,23 +789,16 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		0, sizeof(pushc), &pushc);
 	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
-	{
-		if (ilod == 0) goto skip0;
-		vkCmdBindIndexBuffer(cmd, mesh[0].indx.handle, 0, VK_INDEX_TYPE_UINT32);
-		VkBuffer buffers[] = { mesh[0].vert.handle, instbuf.handle };
+	for (u32 iilod = 0; iilod < ARRAY_SIZE(ilod)-1; iilod++) {
+		if (ilod[iilod] == ilod[iilod+1])
+			continue;
+		vkCmdBindIndexBuffer(cmd, mesh[iilod].indx.handle, 0, VK_INDEX_TYPE_UINT32);
+		VkBuffer buffers[] = { mesh[iilod].vert.handle, instbuf.handle };
 		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
-		vkCmdDrawIndexed(cmd, (u32) mesh[0].indx.size / sizeof(u32), ilod, 0, 0, 0);
+		vkCmdDrawIndexed(cmd, (u32) mesh[iilod].indx.size / sizeof(u32), ilod[iilod+1] - ilod[iilod], 0, 0, ilod[iilod]);
 	}
-skip0:
-	{
-		if (ilod == tree->n_orbit) goto skip1;
-		vkCmdBindIndexBuffer(cmd, mesh[1].indx.handle, 0, VK_INDEX_TYPE_UINT32);
-		VkBuffer buffers[] = { mesh[1].vert.handle, instbuf.handle };
-		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
-		vkCmdDrawIndexed(cmd, (u32) mesh[1].indx.size / sizeof(u32), tree->n_orbit - ilod, 0, 0, ilod);
-	}
-skip1:
 	command_buffer_end(cmd);
+
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -865,13 +866,17 @@ int main()
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
-	uploaded_mesh lod[2];
+	uploaded_mesh lod[3];
 	mesh m = uv_sphere(64, 48, 0.5f);
 	lod[0] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
 	m = uv_sphere(16, 12, 0.5f);
 	lod[1] = mesh_upload(&ctx, m,
+		&loading_lifetime, &window_lifetime);
+	mesh_fini(&m);
+	m = uv_sphere(6, 3, 0.5f);
+	lod[2] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
 	orbit_tree tree = orbit_tree_init(1u << 12);
