@@ -499,7 +499,7 @@ typedef struct {
 	orbiting *orbit_specs;
 	u32 *index;
 	mat4 *tfm;
-	float *dist2cam;
+	float *sortkey;
 } orbit_tree;
 
 void rand_init()
@@ -578,7 +578,7 @@ void orbit_tree_fini(orbit_tree *tree)
 {
 	free(tree->worldpos);
 	free(tree->tfm);
-	free(tree->dist2cam);
+	free(tree->sortkey);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -659,22 +659,12 @@ bool visible(float scl, mat4 model, camera *cam)
 	return in_clip(lclip) || in_clip(uclip);
 }
 
-struct orbit_tree_sorting_data {
-	float *dist2cam;
-	vec4 *worldpos;
-};
-
 int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
 {
-	struct orbit_tree_sorting_data *data = data_;
+	float *sortkeys = data_;
 	const u32 l = *(u32*) l_;
 	const u32 r = *(u32*) r_;
-	float dl2 = data->dist2cam[l];
-	float dr2 = data->dist2cam[r];
-	float sl = data->worldpos[l][3];
-	float sr = data->worldpos[r][3];
-	float diff = dl2 * sr * sr - dr2 * sl * sl;
-	if (diff < 0.0f) {
+	if (sortkeys[l] - sortkeys[r] < 0.0f) {
 		return -1;
 	} else {
 		return +1;
@@ -694,14 +684,12 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 	}
 	// fast
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
-		tree->dist2cam[i + 1] = glm_vec3_distance2(cam->pos, tree->worldpos[i + 1]);
+		float scale = tree->worldpos[i + 1][3];
+		tree->sortkey[i + 1] = glm_vec3_distance2(cam->pos, tree->worldpos[i + 1]) / (scale * scale);
 		tree->index[i] = i + 1;
 	}
 	// slow
-	struct orbit_tree_sorting_data data;
-	data.worldpos = tree->worldpos;
-	data.dist2cam = tree->dist2cam;
-	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, &data);
+	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, tree->sortkey);
 	u32 n_visible = 0;
 	// slow (same time)
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
