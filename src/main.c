@@ -681,20 +681,25 @@ bool visible(orbiting *node, mat4 model, camera *cam)
 
 u32 flatten(orbit_tree *tree, float time, camera *cam)
 {
+	// fast
 	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
 	for (u32 i = 0; i < tree->n_orbit; i++) {
 		tree->index[i] = i;
 	}
+	// not fast
 	for (u32 i = 0; i < tree->height; i++) {
 		flatten_once(tree, time);
 	}
+	// fast
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		tree->index[i] = i + 1;
 	}
+	// slow
 	global_orbit_tree = tree;
 	memcpy(global_camera_position, cam->pos, sizeof(vec3));
 	qsort(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp);
 	u32 n_visible = 0;
+	// slow (same time)
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		u32 sorted = tree->index[i];
 		assert(sorted < tree->n_orbit && sorted != 0);
