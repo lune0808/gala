@@ -517,6 +517,16 @@ float rand_float(float min, float max)
 	return min + (max - min) * ((float) rand() / (float) RAND_MAX);
 }
 
+float rand_bell_like_01()
+{
+	float unif = rand_float(0.0f, 1.0f);
+	if (unif < 0.5f) {
+		return sqrtf(unif * 0.5f);
+	} else {
+		return 1.0f - sqrtf(1.0f - unif * 0.5f);
+	}
+}
+
 void rand_vec3_dir(float zmin, float zmax, vec3 dest)
 {
 	float xy_angle = rand_float(0.0f, 2.0f * (float) M_PI);
@@ -530,7 +540,7 @@ void rand_vec3_dir(float zmin, float zmax, vec3 dest)
 void rand_vec3_shell(float zmin, float zmax, float rmin, float rmax, vec3 dest)
 {
 	rand_vec3_dir(zmin, zmax, dest);
-	float r = rand_float(rmin, rmax);
+	float r = rmin + (rmax - rmin) * rand_bell_like_01();
 	glm_vec3_scale(dest, r, dest);
 }
 
@@ -546,7 +556,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 24.0f, o->offset);
+		rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
 		o->scale = rand_float(1.0f/64.0f, 1.0f/8.0f);
 		rand_vec3_dir(0.0f, 1.0f/96.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f);
@@ -615,27 +625,6 @@ int orbit_tree_node_cmp(const void *l_, const void *r_)
 	}
 }
 
-void flatten(orbit_tree *tree, float time)
-{
-	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		tree->index[i] = i;
-	}
-	for (u32 i = 0; i < tree->height; i++) {
-		flatten_once(tree, time);
-	}
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		tree->index[i] = i;
-	}
-	global_orbit_tree = tree;
-	qsort(tree->index, tree->n_orbit, sizeof(u32), orbit_tree_node_cmp);
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		u32 j = tree->index[i];
-		assert(j < tree->n_orbit);
-		orbit_tree_index(tree, j, time, tree->tfm[i]);
-	}
-}
-
 typedef struct {
 	mat4 tfm;
 	float flat_angle;
@@ -646,6 +635,70 @@ typedef struct {
 	float near;
 	float far;
 } camera;
+
+bool in_interval(float test, float min, float max)
+{
+	return min <= test && test <= max;
+}
+
+void perspective_divide(vec4 h, vec3 v)
+{
+	v[0] = h[0] / h[3];
+	v[1] = h[1] / h[3];
+	v[2] = h[2] / h[3];
+}
+
+bool in_clip(vec3 clip)
+{
+	return in_interval(clip[0], -1.0f, +1.0f)
+	    && in_interval(clip[1], -1.0f, +1.0f)
+	    && in_interval(clip[2],  0.0f,  1.0f);
+}
+
+bool visible(orbiting *node, mat4 model, camera *cam)
+{
+	mat4 mvp;
+	memcpy(mvp, model, sizeof(mat4));
+	mvp[3][3] = 1.0f;
+	glm_mat4_mul(cam->tfm, mvp, mvp);
+	float scl = node->scale;
+	vec4 lbound = { -scl * 0.5f, -scl * 0.5f, -scl * 0.5f, 1.0f };
+	vec4 ubound = { +scl * 0.5f, +scl * 0.5f, +scl * 0.5f, 1.0f };
+	vec3 lclip;
+	vec3 uclip;
+	perspective_divide(lbound, lclip);
+	perspective_divide(ubound, uclip);
+	// this should also hide planets
+	// that are much bigger than the screen
+	return in_clip(lclip) || in_clip(uclip);
+}
+
+u32 flatten(orbit_tree *tree, float time, camera *cam)
+{
+	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
+	for (u32 i = 0; i < tree->n_orbit; i++) {
+		tree->index[i] = i;
+	}
+	for (u32 i = 0; i < tree->height; i++) {
+		flatten_once(tree, time);
+	}
+	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
+		tree->index[i] = i + 1;
+	}
+	global_orbit_tree = tree;
+	memcpy(global_camera_position, cam->pos, sizeof(vec3));
+	qsort(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp);
+	u32 n_visible = 0;
+	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
+		u32 sorted = tree->index[i];
+		assert(sorted < tree->n_orbit && sorted != 0);
+		orbit_tree_index(tree, sorted, time, tree->tfm[n_visible]);
+		if (visible(&tree->orbit_specs[sorted], tree->tfm[n_visible], cam)) {
+			n_visible++;
+		}
+	}
+	return n_visible;
+}
 
 void camera_matrix(camera *cam)
 {
@@ -754,26 +807,31 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 {
 	// render
 	float now = (float) glfwGetTime();
-	memcpy(global_camera_position, cam->pos, sizeof(vec3));
-	flatten(tree, now);
-	u32 ilod[4];
+	u32 ilod[5];
+	u32 n_visible = flatten(tree, now, cam);
 	ilod[0] = 0;
-	ilod[ARRAY_SIZE(ilod)-1] = tree->n_orbit;
+	for (u32 i = 1; i < ARRAY_SIZE(ilod); i++) {
+		ilod[i] = n_visible;
+	}
 	u32 iilod = 1;
-	float dist2_max[2] = { 25.0f, 100.0f };
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		float d2 = glm_vec3_distance2(cam->pos, tree->tfm[i][3]);
-		if (d2 > dist2_max[iilod-1]) {
+	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 5e4f };
+	for (u32 i = 0; i < n_visible; i++) {
+		u32 sorted = tree->index[i];
+		float d2 = glm_vec3_distance2(cam->pos, tree->worldpos[sorted]);
+		float s = tree->orbit_specs[sorted].scale;
+		assert(s > 0.0f);
+		if (d2 / (s * s) > dist2_max[iilod-1]) {
 			ilod[iilod++] = i;
 			if (iilod == ARRAY_SIZE(ilod)-1)
 				break;
 		}
 	}
+	printf("   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ", ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
 
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
 	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
 	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
-	memcpy(mapped + next_index * inst_size, tree->tfm, tree->n_orbit * sizeof(mat4));
+	memcpy(mapped + next_index * inst_size, tree->tfm, n_visible * sizeof(mat4));
 	// cpu wait for current frame to be done rendering
 	attached_swapchain_swap_buffers(ctx, sc);
 	// recording commands for next frame
@@ -785,9 +843,6 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam);
-	vkCmdPushConstants(cmd, pipe->layout,
-		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-		0, sizeof(pushc), &pushc);
 	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
 	for (u32 iilod = 0; iilod < ARRAY_SIZE(ilod)-1; iilod++) {
 		if (ilod[iilod] == ilod[iilod+1])
@@ -795,6 +850,10 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 		vkCmdBindIndexBuffer(cmd, mesh[iilod].indx.handle, 0, VK_INDEX_TYPE_UINT32);
 		VkBuffer buffers[] = { mesh[iilod].vert.handle, instbuf.handle };
 		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+		pushc.lod = (float) iilod;
+		vkCmdPushConstants(cmd, pipe->layout,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			0, sizeof(pushc), &pushc);
 		vkCmdDrawIndexed(cmd, (u32) mesh[iilod].indx.size / sizeof(u32), ilod[iilod+1] - ilod[iilod], 0, 0, ilod[iilod]);
 	}
 	command_buffer_end(cmd);
@@ -866,7 +925,7 @@ int main()
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
-	uploaded_mesh lod[3];
+	uploaded_mesh lod[4];
 	mesh m = uv_sphere(64, 48, 0.5f);
 	lod[0] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
@@ -877,6 +936,10 @@ int main()
 	mesh_fini(&m);
 	m = uv_sphere(6, 3, 0.5f);
 	lod[2] = mesh_upload(&ctx, m,
+		&loading_lifetime, &window_lifetime);
+	mesh_fini(&m);
+	m = uv_sphere(3, 2, 0.5f);
+	lod[3] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
 	orbit_tree tree = orbit_tree_init(1u << 14);
@@ -900,7 +963,7 @@ int main()
 		camera_matrix(&cam);
 		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped);
 		double end_time = glfwGetTime();
-		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
+		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
