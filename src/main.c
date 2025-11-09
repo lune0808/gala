@@ -625,27 +625,6 @@ int orbit_tree_node_cmp(const void *l_, const void *r_)
 	}
 }
 
-void flatten(orbit_tree *tree, float time)
-{
-	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		tree->index[i] = i;
-	}
-	for (u32 i = 0; i < tree->height; i++) {
-		flatten_once(tree, time);
-	}
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		tree->index[i] = i;
-	}
-	global_orbit_tree = tree;
-	qsort(tree->index, tree->n_orbit, sizeof(u32), orbit_tree_node_cmp);
-	for (u32 i = 0; i < tree->n_orbit; i++) {
-		u32 j = tree->index[i];
-		assert(j < tree->n_orbit);
-		orbit_tree_index(tree, j, time, tree->tfm[i]);
-	}
-}
-
 typedef struct {
 	mat4 tfm;
 	float flat_angle;
@@ -656,6 +635,40 @@ typedef struct {
 	float near;
 	float far;
 } camera;
+
+bool visible(orbiting *node, mat4 model, camera *cam)
+{
+	(void) node;
+	(void) model;
+	(void) cam;
+	return true;
+}
+
+u32 flatten(orbit_tree *tree, float time, camera *cam)
+{
+	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
+	for (u32 i = 0; i < tree->n_orbit; i++) {
+		tree->index[i] = i;
+	}
+	for (u32 i = 0; i < tree->height; i++) {
+		flatten_once(tree, time);
+	}
+	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
+		tree->index[i] = i + 1;
+	}
+	global_orbit_tree = tree;
+	qsort(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp);
+	u32 n_visible = 0;
+	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
+		u32 sorted = tree->index[i];
+		assert(sorted < tree->n_orbit);
+		orbit_tree_index(tree, sorted, time, tree->tfm[n_visible]);
+		if (visible(&tree->orbit_specs[i], tree->tfm[n_visible], cam)) {
+			n_visible++;
+		}
+	}
+	return n_visible;
+}
 
 void camera_matrix(camera *cam)
 {
@@ -765,15 +778,16 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	// render
 	float now = (float) glfwGetTime();
 	memcpy(global_camera_position, cam->pos, sizeof(vec3));
-	flatten(tree, now);
 	u32 ilod[5];
+	ilod[ARRAY_SIZE(ilod)-1] = flatten(tree, now, cam);
 	ilod[0] = 0;
-	ilod[ARRAY_SIZE(ilod)-1] = tree->n_orbit;
 	u32 iilod = 1;
-	float dist2_max[ARRAY_SIZE(ilod)-2] = { 25.0f, 100.0f, 300.0f };
-	for (u32 i = 0; i < tree->n_orbit; i++) {
+	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 3e4f };
+	for (u32 i = ilod[0]; i < ilod[ARRAY_SIZE(ilod)-1]; i++) {
 		float d2 = glm_vec3_distance2(cam->pos, tree->tfm[i][3]);
-		if (d2 > dist2_max[iilod-1]) {
+		float scale = tree->orbit_specs[tree->index[i]].scale;
+		assert(scale > 0.0f);
+		if (d2 / (scale * scale) > dist2_max[iilod-1]) {
 			ilod[iilod++] = i;
 			if (iilod == ARRAY_SIZE(ilod)-1)
 				break;
