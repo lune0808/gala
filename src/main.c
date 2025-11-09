@@ -500,6 +500,7 @@ typedef struct {
 	u32 *index;
 	mat4 *tfm;
 	float *sortkey;
+	u32 *tex;
 } orbit_tree;
 
 void rand_init()
@@ -554,6 +555,9 @@ orbit_tree orbit_tree_init(u32 cnt)
 	worldpos[0][3] = 0.0f;
 	orbit_specs[1] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, 0 };
 	worldpos[1][3] = 1.0f;
+	u32 *tex = xmalloc(n_orbit * sizeof(u32));
+	tex[0] = 0;
+	tex[1] = 0;
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
@@ -564,11 +568,12 @@ orbit_tree orbit_tree_init(u32 cnt)
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
 		o->parent = 1;
+		tex[i] = rand_u32(1, 12);
 	}
 	for (u32 i = 0; i < n_orbit; i++) {
 		parent[i] = i;
 	}
-	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)), xmalloc(n_orbit * sizeof(float)) };
+	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)), xmalloc(n_orbit * sizeof(float)), tex };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
@@ -576,6 +581,7 @@ void orbit_tree_fini(orbit_tree *tree)
 	free(tree->worldpos);
 	free(tree->tfm);
 	free(tree->sortkey);
+	free(tree->tex);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -600,7 +606,7 @@ void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
 	float scale = tree->worldpos[i][3];
 	glm_scale(dest, (vec3){ scale, scale, scale });
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
-	dest[3][3] = (float) (i & 1);
+	dest[3][3] = (float) tree->tex[i];
 }
 
 typedef struct {
@@ -921,11 +927,23 @@ int main()
 	lifetime loading_lifetime = lifetime_init(&ctx, sc.graphics_queue,
 		VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
 		| VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, 4);
+	loaded_image images[] = {
+		load_image("res/2k_sun.jpg"),
+		load_image("res/2k_ceres_fictional.jpg"),
+		load_image("res/2k_eris_fictional.jpg"),
+		load_image("res/2k_haumea_fictional.jpg"),
+		load_image("res/2k_jupiter.jpg"),
+		load_image("res/2k_makemake_fictional.jpg"),
+		load_image("res/2k_mars.jpg"),
+		load_image("res/2k_mercury.jpg"),
+		load_image("res/2k_moon.jpg"),
+		load_image("res/2k_neptune.jpg"),
+		load_image("res/2k_saturn.jpg"),
+		load_image("res/2k_uranus.jpg"),
+		load_image("res/2k_venus_surface.jpg"),
+	};
 	vulkan_bound_image textures = vulkan_bound_image_upload(&ctx,
-		2, (loaded_image[]){
-			load_image("res/2k_venus_surface.jpg"),
-			load_image("res/2k_mercury.jpg"),
-		}, &loading_lifetime);
+		ARRAY_SIZE(images), images, &loading_lifetime);
 	lifetime_bind_image(&window_lifetime, textures);
 	VkSampler sampler = sampler_create(&ctx);
 	lifetime_bind_sampler(&window_lifetime, sampler);
