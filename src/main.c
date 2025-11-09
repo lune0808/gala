@@ -612,7 +612,8 @@ void orbit_tree_index(orbit_tree *tree, u32 i, float dt, mat4 dest)
 {
 	versor dq;
 	glm_vec4_scale(tree->selfrot[i][1], dt, dq);
-	glm_quat_add(tree->selfrot[i][0], dq, tree->selfrot[i][0]);
+	dq[3] = 1.0f;
+	glm_quat_mul(dq, tree->selfrot[i][0], tree->selfrot[i][0]);
 	glm_quat_normalize(tree->selfrot[i][0]);
 	glm_quat_mat4(tree->selfrot[i][0], dest);
 	float scale = tree->worldpos[i][3];
