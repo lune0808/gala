@@ -10,6 +10,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <cglm/cglm.h>
+#include <cglm/clipspace/persp_rh_zo.h>
 #include <stb/stb_image.h>
 #include "shared.h"
 #include "util.h"
@@ -374,7 +375,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable = VK_TRUE,
 		.depthWriteEnable = VK_TRUE,
-		.depthCompareOp = VK_COMPARE_OP_LESS,
+		.depthCompareOp = VK_COMPARE_OP_GREATER,
 		.depthBoundsTestEnable = VK_FALSE,
 		.stencilTestEnable = VK_FALSE,
 	};
@@ -462,7 +463,7 @@ void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
 		crash("vkBeginCommandBuffer");
 	VkClearValue clear[] = {
 		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
-		[1].depthStencil = {1.0f, 0},
+		[1].depthStencil = {0.0f, 0},
 	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -755,7 +756,7 @@ void camera_matrix(camera *cam)
 	mat4 view;
 	glm_lookat(cam->pos, in_front, (vec3){ 0.0f, 0.0f, 1.0f }, view);
 	mat4 proj;
-	glm_perspective(cam->fov_rad, cam->aspect, cam->near, cam->far, proj);
+	glm_perspective_rh_zo(cam->fov_rad, cam->aspect, cam->far, cam->near, proj);
 	proj[1][1] *= -1.0f;
 	glm_mat4_mul(proj, view, cam->tfm);
 }
