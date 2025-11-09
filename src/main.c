@@ -636,12 +636,29 @@ typedef struct {
 	float far;
 } camera;
 
+bool in_interval(float test, float min, float max)
+{
+	return min <= test && test <= max;
+}
+
 bool visible(orbiting *node, mat4 model, camera *cam)
 {
+	vec4 clip_pos;
+	mat4 mvp;
+	memcpy(mvp, model, sizeof(mat4));
+	mvp[3][3] = 1.0f;
+	glm_mat4_mul(cam->tfm, mvp, mvp);
+	glm_mat4_mulv(mvp, (vec4){ 0.0f, 0.0f, 0.0f, 1.0f }, clip_pos);
+	if (clip_pos[3] < 0.1f || clip_pos[3] > 100.0f) {
+		return false;
+	}
+	clip_pos[0] /= clip_pos[3];
+	clip_pos[1] /= clip_pos[3];
+	clip_pos[2] /= clip_pos[3];
+	return in_interval(clip_pos[0], -1.0f, +1.0f)
+	    && in_interval(clip_pos[1], -1.0f, +1.0f)
+	    && in_interval(clip_pos[2],  0.0f,  1.0f);
 	(void) node;
-	(void) model;
-	(void) cam;
-	return true;
 }
 
 u32 flatten(orbit_tree *tree, float time, camera *cam)
@@ -657,13 +674,14 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 		tree->index[i] = i + 1;
 	}
 	global_orbit_tree = tree;
+	memcpy(global_camera_position, cam->pos, sizeof(vec3));
 	qsort(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp);
 	u32 n_visible = 0;
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		u32 sorted = tree->index[i];
-		assert(sorted < tree->n_orbit);
+		assert(sorted < tree->n_orbit && sorted != 0);
 		orbit_tree_index(tree, sorted, time, tree->tfm[n_visible]);
-		if (visible(&tree->orbit_specs[i], tree->tfm[n_visible], cam)) {
+		if (visible(&tree->orbit_specs[sorted], tree->tfm[n_visible], cam)) {
 			n_visible++;
 		}
 	}
@@ -777,27 +795,32 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 {
 	// render
 	float now = (float) glfwGetTime();
-	memcpy(global_camera_position, cam->pos, sizeof(vec3));
+	now = 0.0f;
 	u32 ilod[5];
-	ilod[ARRAY_SIZE(ilod)-1] = flatten(tree, now, cam);
+	u32 n_visible = flatten(tree, now, cam);
 	ilod[0] = 0;
+	for (u32 i = 1; i < ARRAY_SIZE(ilod); i++) {
+		ilod[i] = n_visible;
+	}
 	u32 iilod = 1;
-	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 3e4f };
-	for (u32 i = ilod[0]; i < ilod[ARRAY_SIZE(ilod)-1]; i++) {
-		float d2 = glm_vec3_distance2(cam->pos, tree->tfm[i][3]);
-		float scale = tree->orbit_specs[tree->index[i]].scale;
-		assert(scale > 0.0f);
-		if (d2 / (scale * scale) > dist2_max[iilod-1]) {
+	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 5e4f };
+	for (u32 i = 0; i < n_visible; i++) {
+		u32 sorted = tree->index[i];
+		float d2 = glm_vec3_distance2(cam->pos, tree->worldpos[sorted]);
+		float s = tree->orbit_specs[sorted].scale;
+		assert(s > 0.0f);
+		if (d2 / (s * s) > dist2_max[iilod-1]) {
 			ilod[iilod++] = i;
 			if (iilod == ARRAY_SIZE(ilod)-1)
 				break;
 		}
 	}
+	printf("   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ", ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
 
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
 	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
 	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
-	memcpy(mapped + next_index * inst_size, tree->tfm, tree->n_orbit * sizeof(mat4));
+	memcpy(mapped + next_index * inst_size, tree->tfm, n_visible * sizeof(mat4));
 	// cpu wait for current frame to be done rendering
 	attached_swapchain_swap_buffers(ctx, sc);
 	// recording commands for next frame
@@ -903,7 +926,7 @@ int main()
 	lod[2] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
-	m = uv_sphere(3, 1, 0.5f);
+	m = uv_sphere(3, 2, 0.5f);
 	lod[3] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
@@ -928,7 +951,7 @@ int main()
 		camera_matrix(&cam);
 		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped);
 		double end_time = glfwGetTime();
-		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
+		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
