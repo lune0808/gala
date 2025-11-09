@@ -517,6 +517,16 @@ float rand_float(float min, float max)
 	return min + (max - min) * ((float) rand() / (float) RAND_MAX);
 }
 
+float rand_bell_like_01()
+{
+	float unif = rand_float(0.0f, 1.0f);
+	if (unif < 0.5f) {
+		return sqrtf(unif * 0.5f);
+	} else {
+		return 1.0f - sqrtf(1.0f - unif * 0.5f);
+	}
+}
+
 void rand_vec3_dir(float zmin, float zmax, vec3 dest)
 {
 	float xy_angle = rand_float(0.0f, 2.0f * (float) M_PI);
@@ -530,7 +540,7 @@ void rand_vec3_dir(float zmin, float zmax, vec3 dest)
 void rand_vec3_shell(float zmin, float zmax, float rmin, float rmax, vec3 dest)
 {
 	rand_vec3_dir(zmin, zmax, dest);
-	float r = rand_float(rmin, rmax);
+	float r = rmin + (rmax - rmin) * rand_bell_like_01();
 	glm_vec3_scale(dest, r, dest);
 }
 
@@ -546,7 +556,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 24.0f, o->offset);
+		rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
 		o->scale = rand_float(1.0f/64.0f, 1.0f/8.0f);
 		rand_vec3_dir(0.0f, 1.0f/96.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f);
@@ -756,11 +766,11 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	float now = (float) glfwGetTime();
 	memcpy(global_camera_position, cam->pos, sizeof(vec3));
 	flatten(tree, now);
-	u32 ilod[4];
+	u32 ilod[5];
 	ilod[0] = 0;
 	ilod[ARRAY_SIZE(ilod)-1] = tree->n_orbit;
 	u32 iilod = 1;
-	float dist2_max[2] = { 25.0f, 100.0f };
+	float dist2_max[ARRAY_SIZE(ilod)-2] = { 25.0f, 100.0f, 300.0f };
 	for (u32 i = 0; i < tree->n_orbit; i++) {
 		float d2 = glm_vec3_distance2(cam->pos, tree->tfm[i][3]);
 		if (d2 > dist2_max[iilod-1]) {
@@ -866,7 +876,7 @@ int main()
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
-	uploaded_mesh lod[3];
+	uploaded_mesh lod[4];
 	mesh m = uv_sphere(64, 48, 0.5f);
 	lod[0] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
@@ -877,6 +887,10 @@ int main()
 	mesh_fini(&m);
 	m = uv_sphere(6, 3, 0.5f);
 	lod[2] = mesh_upload(&ctx, m,
+		&loading_lifetime, &window_lifetime);
+	mesh_fini(&m);
+	m = uv_sphere(3, 1, 0.5f);
+	lod[3] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
 	orbit_tree tree = orbit_tree_init(1u << 14);
