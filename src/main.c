@@ -697,7 +697,7 @@ static float time_now_ms()
 	return (float) glfwGetTime() * 1e3f;
 }
 
-u32 flatten(orbit_tree *tree, float time, float dt, camera *cam)
+u32 flatten(orbit_tree *tree, float time, float dt, camera *cam, u32 *ilod)
 {
 	// fast
 	for (u32 i = 0; i < tree->n_orbit; i++) {
@@ -716,19 +716,32 @@ u32 flatten(orbit_tree *tree, float time, float dt, camera *cam)
 	}
 	// slow
 	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, tree->sortkey);
+	u32 iilod = 0;
 	u32 n_visible = 0;
 	// slower
+	float dist2_max[5] = { 0.0f, 5e1f, 5e3f, 5e4f, INFINITY };
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		u32 sorted = tree->index[i];
 		assert(sorted < tree->n_orbit && sorted != 0);
 		mat4 pos;
 		glm_translate_make(pos, tree->worldpos[sorted]);
 		float scale = tree->worldpos[sorted][3];
+		glm_scale(pos, (vec3){ scale, scale, scale });
 		if (visible(scale, pos, cam)) {
-			orbit_tree_index(tree, sorted, dt, tree->tfm[n_visible++]);
+			if (tree->sortkey[sorted] > dist2_max[iilod]) {
+				ilod[iilod++] = n_visible;
+			}
+			if (iilod < 3) {
+				orbit_tree_index(tree, sorted, dt, tree->tfm[n_visible]);
+			} else {
+				memcpy(tree->tfm[n_visible], pos, sizeof(mat4));
+				tree->tfm[n_visible][3][3] = (float) tree->tex[i];
+			}
+			n_visible++;
 		}
 	}
-	return n_visible;
+	ilod[iilod] = n_visible;
+	return iilod;
 }
 
 void camera_matrix(camera *cam)
@@ -839,22 +852,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	// render
 	float now = (float) glfwGetTime();
 	u32 ilod[5];
-	u32 n_visible = flatten(tree, now, dt, cam);
-	ilod[0] = 0;
-	for (u32 i = 1; i < ARRAY_SIZE(ilod); i++) {
-		ilod[i] = n_visible;
-	}
-	u32 iilod = 1;
-	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 5e4f };
-	for (u32 i = 0; i < n_visible; i++) {
-		u32 sorted = tree->index[i];
-		float sortkey = tree->sortkey[sorted];
-		if (sortkey > dist2_max[iilod-1]) {
-			ilod[iilod++] = i;
-			if (iilod == ARRAY_SIZE(ilod)-1)
-				break;
-		}
-	}
+	u32 nlod = flatten(tree, now, dt, cam, ilod);
 	float render_time = (float) glfwGetTime() - now;
 	printf("    cpu render:%.2fms   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ",
 		render_time * 1e3f, ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
@@ -862,7 +860,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
 	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
 	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
-	memcpy(mapped + next_index * inst_size, tree->tfm, n_visible * sizeof(mat4));
+	memcpy(mapped + next_index * inst_size, tree->tfm, ilod[nlod] * sizeof(mat4));
 	// cpu wait for current frame to be done rendering
 	attached_swapchain_swap_buffers(ctx, sc);
 	// recording commands for next frame
@@ -875,7 +873,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam);
 	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
-	for (u32 iilod = 0; iilod < ARRAY_SIZE(ilod)-1; iilod++) {
+	for (u32 iilod = 0; iilod < nlod; iilod++) {
 		if (ilod[iilod] == ilod[iilod+1])
 			continue;
 		vkCmdBindIndexBuffer(cmd, mesh[iilod].indx.handle, 0, VK_INDEX_TYPE_UINT32);
