@@ -501,6 +501,7 @@ typedef struct {
 	mat4 *tfm;
 	float *sortkey;
 	u32 *tex;
+	versor (*selfrot)[2]; // orientation, velocity
 } orbit_tree;
 
 void rand_init()
@@ -559,6 +560,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	tex[0] = 0;
 	tex[1] = 0;
 	const float PI = (float) M_PI;
+	versor (*selfrot)[2] = xmalloc(n_orbit * sizeof(versor[2]));
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
 		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
@@ -571,9 +573,16 @@ orbit_tree orbit_tree_init(u32 cnt)
 		tex[i] = rand_u32(1, 12);
 	}
 	for (u32 i = 0; i < n_orbit; i++) {
+		orbiting *o = &orbit_specs[i];
+		glm_quat_identity(selfrot[i][0]);
+		// q = exp(u.theta/2)
+		// q' = u.theta'/2.q
+		// q(t+dt) = (1+dt.u.theta'/2).q(t)
+		glm_vec3_scale(o->self_axis, 0.5f * o->self_speed, selfrot[i][1]);
+		selfrot[i][1][3] = 0.0f;
 		parent[i] = i;
 	}
-	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)), xmalloc(n_orbit * sizeof(float)), tex };
+	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)), xmalloc(n_orbit * sizeof(float)), tex, selfrot };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
@@ -599,10 +608,13 @@ void flatten_once(orbit_tree *tree, float time)
 	}
 }
 
-void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
+void orbit_tree_index(orbit_tree *tree, u32 i, float dt, mat4 dest)
 {
-	orbiting *orbit = &tree->orbit_specs[i];
-	glm_rotate_make(dest, orbit->self_speed * time, orbit->self_axis);
+	versor dq;
+	glm_vec4_scale(tree->selfrot[i][1], dt, dq);
+	glm_quat_add(tree->selfrot[i][0], dq, tree->selfrot[i][0]);
+	glm_quat_normalize(tree->selfrot[i][0]);
+	glm_quat_mat4(tree->selfrot[i][0], dest);
 	float scale = tree->worldpos[i][3];
 	glm_scale(dest, (vec3){ scale, scale, scale });
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
@@ -684,7 +696,7 @@ static float time_now_ms()
 	return (float) glfwGetTime() * 1e3f;
 }
 
-u32 flatten(orbit_tree *tree, float time, camera *cam)
+u32 flatten(orbit_tree *tree, float time, float dt, camera *cam)
 {
 	// fast
 	for (u32 i = 0; i < tree->n_orbit; i++) {
@@ -712,7 +724,7 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 		glm_translate_make(pos, tree->worldpos[sorted]);
 		float scale = tree->worldpos[sorted][3];
 		if (visible(scale, pos, cam)) {
-			orbit_tree_index(tree, sorted, time, tree->tfm[n_visible++]);
+			orbit_tree_index(tree, sorted, dt, tree->tfm[n_visible++]);
 		}
 	}
 	return n_visible;
@@ -821,12 +833,12 @@ uploaded_mesh mesh_upload(context *ctx, mesh m,
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	uploaded_mesh *mesh, orbit_tree *tree, camera *cam,
-	vulkan_buffer instbuf, char *mapped)
+	vulkan_buffer instbuf, char *mapped, float dt)
 {
 	// render
 	float now = (float) glfwGetTime();
 	u32 ilod[5];
-	u32 n_visible = flatten(tree, now, cam);
+	u32 n_visible = flatten(tree, now, dt, cam);
 	ilod[0] = 0;
 	for (u32 i = 1; i < ARRAY_SIZE(ilod); i++) {
 		ilod[i] = n_visible;
@@ -991,7 +1003,7 @@ int main()
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped);
+		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped, dt);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
