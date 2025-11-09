@@ -641,24 +641,36 @@ bool in_interval(float test, float min, float max)
 	return min <= test && test <= max;
 }
 
+void perspective_divide(vec4 h, vec3 v)
+{
+	v[0] = h[0] / h[3];
+	v[1] = h[1] / h[3];
+	v[2] = h[2] / h[3];
+}
+
+bool in_clip(vec3 clip)
+{
+	return in_interval(clip[0], -1.0f, +1.0f)
+	    && in_interval(clip[1], -1.0f, +1.0f)
+	    && in_interval(clip[2],  0.0f,  1.0f);
+}
+
 bool visible(orbiting *node, mat4 model, camera *cam)
 {
-	vec4 clip_pos;
 	mat4 mvp;
 	memcpy(mvp, model, sizeof(mat4));
 	mvp[3][3] = 1.0f;
 	glm_mat4_mul(cam->tfm, mvp, mvp);
-	glm_mat4_mulv(mvp, (vec4){ 0.0f, 0.0f, 0.0f, 1.0f }, clip_pos);
-	if (clip_pos[3] < 0.1f || clip_pos[3] > 100.0f) {
-		return false;
-	}
-	clip_pos[0] /= clip_pos[3];
-	clip_pos[1] /= clip_pos[3];
-	clip_pos[2] /= clip_pos[3];
-	return in_interval(clip_pos[0], -1.0f, +1.0f)
-	    && in_interval(clip_pos[1], -1.0f, +1.0f)
-	    && in_interval(clip_pos[2],  0.0f,  1.0f);
-	(void) node;
+	float scl = node->scale;
+	vec4 lbound = { -scl * 0.5f, -scl * 0.5f, -scl * 0.5f, 1.0f };
+	vec4 ubound = { +scl * 0.5f, +scl * 0.5f, +scl * 0.5f, 1.0f };
+	vec3 lclip;
+	vec3 uclip;
+	perspective_divide(lbound, lclip);
+	perspective_divide(ubound, uclip);
+	// this should also hide planets
+	// that are much bigger than the screen
+	return in_clip(lclip) || in_clip(uclip);
 }
 
 u32 flatten(orbit_tree *tree, float time, camera *cam)
