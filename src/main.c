@@ -950,7 +950,7 @@ int main()
 	lod[3] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
-	orbit_tree tree = orbit_tree_init(1u << 14);
+	orbit_tree tree = orbit_tree_init(1u << 15);
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -12.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
