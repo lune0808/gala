@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 #include <stddef.h>
@@ -601,30 +603,6 @@ void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
 	dest[3][3] = (float) (i & 1);
 }
 
-static orbit_tree *global_orbit_tree;
-static vec3 global_camera_position;
-
-int orbit_tree_node_cmp(const void *l_, const void *r_)
-{
-	vec3 camera_pos;
-	memcpy(camera_pos, global_camera_position, sizeof(vec3));
-	orbit_tree *tree = global_orbit_tree;
-	const u32 *l = l_;
-	const u32 *r = r_;
-	float dl2 = glm_vec3_distance2(camera_pos, tree->worldpos[*l]);
-	float dr2 = glm_vec3_distance2(camera_pos, tree->worldpos[*r]);
-	float sl = tree->orbit_specs[*l].scale;
-	float sr = tree->orbit_specs[*r].scale;
-	float diff = dl2 / (sl * sl) - dr2 / (sr * sr);
-	if (diff < 0.0f) {
-		return -1;
-	} else if (diff == 0.0f) {
-		return 0;
-	} else {
-		return +1;
-	}
-}
-
 typedef struct {
 	mat4 tfm;
 	float flat_angle;
@@ -679,6 +657,31 @@ bool visible(orbiting *node, mat4 model, camera *cam)
 	return in_clip(lclip) || in_clip(uclip);
 }
 
+struct orbit_tree_sorting_data {
+	vec4 *worldpos;
+	orbiting *specs;
+	vec3 cam_pos;
+};
+
+int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
+{
+	struct orbit_tree_sorting_data *data = data_;
+	const u32 l = *(u32*) l_;
+	const u32 r = *(u32*) r_;
+	float dl2 = glm_vec3_distance2(data->cam_pos, data->worldpos[l]);
+	float dr2 = glm_vec3_distance2(data->cam_pos, data->worldpos[r]);
+	float sl = data->specs[l].scale;
+	float sr = data->specs[r].scale;
+	float diff = dl2 / (sl * sl) - dr2 / (sr * sr);
+	if (diff < 0.0f) {
+		return -1;
+	} else if (diff == 0.0f) {
+		return 0;
+	} else {
+		return +1;
+	}
+}
+
 u32 flatten(orbit_tree *tree, float time, camera *cam)
 {
 	// fast
@@ -695,9 +698,11 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 		tree->index[i] = i + 1;
 	}
 	// slow
-	global_orbit_tree = tree;
-	memcpy(global_camera_position, cam->pos, sizeof(vec3));
-	qsort(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp);
+	struct orbit_tree_sorting_data data;
+	data.specs = tree->orbit_specs;
+	data.worldpos = tree->worldpos;
+	memcpy(data.cam_pos, cam->pos, sizeof(vec3));
+	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, &data);
 	u32 n_visible = 0;
 	// slow (same time)
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
@@ -955,7 +960,7 @@ int main()
 	lod[3] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
-	orbit_tree tree = orbit_tree_init(1u << 15);
+	orbit_tree tree = orbit_tree_init(1u << 16);
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -12.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
