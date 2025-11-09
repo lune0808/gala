@@ -10,6 +10,7 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <cglm/cglm.h>
+#include <cglm/clipspace/persp_rh_zo.h>
 #include <stb/stb_image.h>
 #include "shared.h"
 #include "util.h"
@@ -374,7 +375,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable = VK_TRUE,
 		.depthWriteEnable = VK_TRUE,
-		.depthCompareOp = VK_COMPARE_OP_LESS,
+		.depthCompareOp = VK_COMPARE_OP_GREATER,
 		.depthBoundsTestEnable = VK_FALSE,
 		.stencilTestEnable = VK_FALSE,
 	};
@@ -462,7 +463,7 @@ void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
 		crash("vkBeginCommandBuffer");
 	VkClearValue clear[] = {
 		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
-		[1].depthStencil = {1.0f, 0},
+		[1].depthStencil = {0.0f, 0},
 	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -492,16 +493,28 @@ typedef struct {
 	u32 parent;
 } orbiting;
 
+enum {
+	OT_TFM = 0,
+	OT_SELFROT = sizeof(mat4),
+	OT_WORLDPOS = OT_SELFROT + sizeof(versor[2]),
+	OT_ORBIT_SPECS = OT_WORLDPOS + sizeof(vec4),
+	OT_INDEX = OT_ORBIT_SPECS + sizeof(orbiting),
+	OT_SORTKEY = OT_INDEX + sizeof(u32),
+	OT_TEX = OT_SORTKEY + sizeof(float),
+	OT_ALL = OT_TEX + sizeof(u32),
+};
+
 typedef struct {
 	u32 height;
 	u32 n_orbit;
+
+	mat4 *tfm;
+	versor (*selfrot)[2]; // orientation, velocity
 	vec4 *worldpos;
 	orbiting *orbit_specs;
 	u32 *index;
-	mat4 *tfm;
 	float *sortkey;
 	u32 *tex;
-	versor (*selfrot)[2]; // orientation, velocity
 } orbit_tree;
 
 void rand_init()
@@ -548,19 +561,22 @@ float rand_vec3_shell(float zmin, float zmax, float rmin, float rmax, vec3 dest)
 orbit_tree orbit_tree_init(u32 cnt)
 {
 	u32 n_orbit = 1 + cnt;
-	char *mem = xmalloc(n_orbit * (sizeof(vec4) + sizeof(orbiting) + sizeof(u32)));
-	vec4 *worldpos = (void*) mem;
-	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
-	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
+	char *mem = xmalloc(n_orbit * OT_ALL);
+	mat4 *tfm = (void*) mem;
+	versor (*selfrot)[2] = (void*) (mem + n_orbit * OT_SELFROT);
+	vec4 *worldpos = (void*) (mem + n_orbit * OT_WORLDPOS);
+	orbiting *orbit_specs = (void*) (mem + n_orbit * OT_ORBIT_SPECS);
+	u32 *index = (void*) (mem + n_orbit * OT_INDEX);
+	float *sortkey = (void*) (mem + n_orbit * OT_SORTKEY);
+	u32 *tex = (void*) (mem + n_orbit * OT_TEX);
+
 	orbit_specs[0] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
 	worldpos[0][3] = 0.0f;
 	orbit_specs[1] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, 0 };
 	worldpos[1][3] = 1.0f;
-	u32 *tex = xmalloc(n_orbit * sizeof(u32));
 	tex[0] = 0;
 	tex[1] = 0;
 	const float PI = (float) M_PI;
-	versor (*selfrot)[2] = xmalloc(n_orbit * sizeof(versor[2]));
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
 		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
@@ -580,17 +596,15 @@ orbit_tree orbit_tree_init(u32 cnt)
 		// q(t+dt) = (1+dt.u.theta'/2).q(t)
 		glm_vec3_scale(o->self_axis, 0.5f * o->self_speed, selfrot[i][1]);
 		selfrot[i][1][3] = 0.0f;
-		parent[i] = i;
+		index[i] = i;
 	}
-	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)), xmalloc(n_orbit * sizeof(float)), tex, selfrot };
+	return (orbit_tree){ 2, n_orbit, tfm, selfrot,
+		worldpos, orbit_specs, index, sortkey, tex };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
 {
-	free(tree->worldpos);
 	free(tree->tfm);
-	free(tree->sortkey);
-	free(tree->tex);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -755,7 +769,7 @@ void camera_matrix(camera *cam)
 	mat4 view;
 	glm_lookat(cam->pos, in_front, (vec3){ 0.0f, 0.0f, 1.0f }, view);
 	mat4 proj;
-	glm_perspective(cam->fov_rad, cam->aspect, cam->near, cam->far, proj);
+	glm_perspective_rh_zo(cam->fov_rad, cam->aspect, cam->far, cam->near, proj);
 	proj[1][1] *= -1.0f;
 	glm_mat4_mul(proj, view, cam->tfm);
 }
