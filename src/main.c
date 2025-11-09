@@ -902,14 +902,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
 	for (u32 iilod = 0; iilod < nlod; iilod++) {
-		if (ilod[iilod] == ilod[iilod+1])
-			continue;
-		assert(mesh->ibase[iilod+1] - mesh->ibase[iilod] < (1u<<20));
-		draws[iilod].indexCount = mesh->ibase[iilod+1] - mesh->ibase[iilod];
 		draws[iilod].instanceCount = ilod[iilod+1] - ilod[iilod];
-		draws[iilod].firstIndex = mesh->ibase[iilod];
-		draws[iilod].vertexOffset = 0;
-		draws[iilod].firstInstance = 0;
 	}
 	command_buffer_begin(cmd, sc);
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->line);
@@ -1041,7 +1034,16 @@ int main()
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	lifetime_bind_buffer(&window_lifetime, drawbuf);
-	VkDrawIndexedIndirectCommand *drawmapped = buffer_map(&ctx, drawbuf);
+	VkDrawIndexedIndirectCommand (*drawmapped)[ARRAY_SIZE(m)] = buffer_map(&ctx, drawbuf);
+	for (u32 iframe = 0; iframe < MAX_FRAMES_RENDERING; iframe++) {
+		VkDrawIndexedIndirectCommand *draws = drawmapped[iframe];
+		for (u32 idraw = 0; idraw < ARRAY_SIZE(m); idraw++) {
+			draws[idraw].indexCount = lods.ibase[idraw+1] - lods.ibase[idraw];
+			draws[idraw].firstIndex = lods.ibase[idraw];
+			draws[idraw].vertexOffset = 0;
+			draws[idraw].firstInstance = 0;
+		}
+	}
 
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
@@ -1049,7 +1051,7 @@ int main()
 		camera_matrix(&cam);
 		draw(&ctx, &sc, &pipe, &lods, &tree,
 			&cam, instbuf, mapped, dt,
-			drawbuf, &drawmapped[sc.frame_indx * ARRAY_SIZE(m)]);
+			drawbuf, drawmapped[sc.frame_indx]);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
