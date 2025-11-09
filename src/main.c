@@ -807,7 +807,6 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 {
 	// render
 	float now = (float) glfwGetTime();
-	now = 0.0f;
 	u32 ilod[5];
 	u32 n_visible = flatten(tree, now, cam);
 	ilod[0] = 0;
@@ -844,9 +843,6 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam);
-	vkCmdPushConstants(cmd, pipe->layout,
-		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-		0, sizeof(pushc), &pushc);
 	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
 	for (u32 iilod = 0; iilod < ARRAY_SIZE(ilod)-1; iilod++) {
 		if (ilod[iilod] == ilod[iilod+1])
@@ -854,6 +850,10 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 		vkCmdBindIndexBuffer(cmd, mesh[iilod].indx.handle, 0, VK_INDEX_TYPE_UINT32);
 		VkBuffer buffers[] = { mesh[iilod].vert.handle, instbuf.handle };
 		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+		pushc.lod = (float) iilod;
+		vkCmdPushConstants(cmd, pipe->layout,
+			VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			0, sizeof(pushc), &pushc);
 		vkCmdDrawIndexed(cmd, (u32) mesh[iilod].indx.size / sizeof(u32), ilod[iilod+1] - ilod[iilod], 0, 0, ilod[iilod]);
 	}
 	command_buffer_end(cmd);

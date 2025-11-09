@@ -19,6 +19,11 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
+#if 0
+	vec3 red = vec3(1.0, 0.0, 0.0);
+	vec3 green = vec3(0.0, 1.0, 0.0);
+	frag_color = vec4(mix(red, green, draw.lod / 4.0), 1.0);
+#else
 	vec3 color = texture(tex, vec3(vert_uv, vert_texindex)).rgb;
 	vec3 source = vec3(0.0);
 	vec3 normal = normalize(vert_normal);
@@ -26,5 +31,6 @@ void main()
 	float diffuse = pow(max(0.0, dot(to_light, normal)), 8.0);
 	float ambient = 0.02f;
 	frag_color = vec4((ambient + diffuse) * color, 1.0);
+#endif
 }
 

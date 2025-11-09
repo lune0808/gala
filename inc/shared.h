@@ -7,6 +7,7 @@
 
 struct push_constant_data {
 	mat4 viewproj;
+	float lod;
 };
 
 #endif /* GALA_SHARED_H */
