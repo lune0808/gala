@@ -671,6 +671,12 @@ int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
 	}
 }
 
+__attribute__((unused))
+static float time_now_ms()
+{
+	return (float) glfwGetTime() * 1e3f;
+}
+
 u32 flatten(orbit_tree *tree, float time, camera *cam)
 {
 	// fast
@@ -691,7 +697,7 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 	// slow
 	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, tree->sortkey);
 	u32 n_visible = 0;
-	// slow (same time)
+	// slower
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		u32 sorted = tree->index[i];
 		assert(sorted < tree->n_orbit && sorted != 0);
