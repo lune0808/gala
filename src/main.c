@@ -664,6 +664,8 @@ bool visible(orbiting *node, mat4 model, camera *cam)
 	float scl = node->scale;
 	vec4 lbound = { -scl * 0.5f, -scl * 0.5f, -scl * 0.5f, 1.0f };
 	vec4 ubound = { +scl * 0.5f, +scl * 0.5f, +scl * 0.5f, 1.0f };
+	glm_mat4_mulv(mvp, lbound, lbound);
+	glm_mat4_mulv(mvp, ubound, ubound);
 	vec3 lclip;
 	vec3 uclip;
 	perspective_divide(lbound, lclip);
