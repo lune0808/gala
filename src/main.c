@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
 #include <stddef.h>
@@ -483,7 +485,6 @@ void command_buffer_end(VkCommandBuffer cbuf)
 
 typedef struct {
 	vec3 offset;      // initial position & phase
-	float scale;      // world scale
 	vec3 axis;        // orbiting axis
 	float speed;      // running orbit speed
 	vec3 self_axis;   // self rotation axis
@@ -498,6 +499,9 @@ typedef struct {
 	orbiting *orbit_specs;
 	u32 *index;
 	mat4 *tfm;
+	float *sortkey;
+	u32 *tex;
+	versor (*selfrot)[2]; // orientation, velocity
 } orbit_tree;
 
 void rand_init()
@@ -520,11 +524,7 @@ float rand_float(float min, float max)
 float rand_bell_like_01()
 {
 	float unif = rand_float(0.0f, 1.0f);
-	if (unif < 0.5f) {
-		return sqrtf(unif * 0.5f);
-	} else {
-		return 1.0f - sqrtf(1.0f - unif * 0.5f);
-	}
+	return sqrtf(unif);
 }
 
 void rand_vec3_dir(float zmin, float zmax, vec3 dest)
@@ -537,11 +537,12 @@ void rand_vec3_dir(float zmin, float zmax, vec3 dest)
 	dest[2] = cosf(z_angle);
 }
 
-void rand_vec3_shell(float zmin, float zmax, float rmin, float rmax, vec3 dest)
+float rand_vec3_shell(float zmin, float zmax, float rmin, float rmax, vec3 dest)
 {
 	rand_vec3_dir(zmin, zmax, dest);
 	float r = rmin + (rmax - rmin) * rand_bell_like_01();
 	glm_vec3_scale(dest, r, dest);
+	return r;
 }
 
 orbit_tree orbit_tree_init(u32 cnt)
@@ -551,29 +552,45 @@ orbit_tree orbit_tree_init(u32 cnt)
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
-	orbit_specs[0] = (orbiting){ {}, 0.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
-	orbit_specs[1] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, 0 };
+	orbit_specs[0] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	worldpos[0][3] = 0.0f;
+	orbit_specs[1] = (orbiting){ {}, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, 0 };
+	worldpos[1][3] = 1.0f;
+	u32 *tex = xmalloc(n_orbit * sizeof(u32));
+	tex[0] = 0;
+	tex[1] = 0;
 	const float PI = (float) M_PI;
+	versor (*selfrot)[2] = xmalloc(n_orbit * sizeof(versor[2]));
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
-		o->scale = rand_float(1.0f/64.0f, 1.0f/8.0f);
-		rand_vec3_dir(0.0f, 1.0f/96.0f * PI, o->axis);
-		o->speed = rand_float(0.5f, 0.65f);
+		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
+		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.2f;
+		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
+		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 100.0f;
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
 		o->parent = 1;
+		tex[i] = rand_u32(1, 12);
 	}
 	for (u32 i = 0; i < n_orbit; i++) {
+		orbiting *o = &orbit_specs[i];
+		glm_quat_identity(selfrot[i][0]);
+		// q = exp(u.theta/2)
+		// q' = u.theta'/2.q
+		// q(t+dt) = (1+dt.u.theta'/2).q(t)
+		glm_vec3_scale(o->self_axis, 0.5f * o->self_speed, selfrot[i][1]);
+		selfrot[i][1][3] = 0.0f;
 		parent[i] = i;
 	}
-	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)) };
+	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)), xmalloc(n_orbit * sizeof(float)), tex, selfrot };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
 {
 	free(tree->worldpos);
 	free(tree->tfm);
+	free(tree->sortkey);
+	free(tree->tex);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -591,38 +608,18 @@ void flatten_once(orbit_tree *tree, float time)
 	}
 }
 
-void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
+void orbit_tree_index(orbit_tree *tree, u32 i, float dt, mat4 dest)
 {
-	orbiting *orbit = &tree->orbit_specs[i];
-	glm_rotate_make(dest, orbit->self_speed * time, orbit->self_axis);
-	float scale = orbit->scale;
+	versor dq;
+	glm_vec4_scale(tree->selfrot[i][1], dt, dq);
+	dq[3] = 1.0f;
+	glm_quat_mul(dq, tree->selfrot[i][0], tree->selfrot[i][0]);
+	glm_quat_normalize(tree->selfrot[i][0]);
+	glm_quat_mat4(tree->selfrot[i][0], dest);
+	float scale = tree->worldpos[i][3];
 	glm_scale(dest, (vec3){ scale, scale, scale });
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
-	dest[3][3] = (float) (i & 1);
-}
-
-static orbit_tree *global_orbit_tree;
-static vec3 global_camera_position;
-
-int orbit_tree_node_cmp(const void *l_, const void *r_)
-{
-	vec3 camera_pos;
-	memcpy(camera_pos, global_camera_position, sizeof(vec3));
-	orbit_tree *tree = global_orbit_tree;
-	const u32 *l = l_;
-	const u32 *r = r_;
-	float dl2 = glm_vec3_distance2(camera_pos, tree->worldpos[*l]);
-	float dr2 = glm_vec3_distance2(camera_pos, tree->worldpos[*r]);
-	float sl = tree->orbit_specs[*l].scale;
-	float sr = tree->orbit_specs[*r].scale;
-	float diff = dl2 / (sl * sl) - dr2 / (sr * sr);
-	if (diff < 0.0f) {
-		return -1;
-	} else if (diff == 0.0f) {
-		return 0;
-	} else {
-		return +1;
-	}
+	dest[3][3] = (float) tree->tex[i];
 }
 
 typedef struct {
@@ -650,18 +647,21 @@ void perspective_divide(vec4 h, vec3 v)
 
 bool in_clip(vec3 clip)
 {
-	return in_interval(clip[0], -1.0f, +1.0f)
-	    && in_interval(clip[1], -1.0f, +1.0f)
-	    && in_interval(clip[2],  0.0f,  1.0f);
+	// allow for a bit of extra stuff to be rendered
+	// so that if the camera turns fast it is still
+	// shown
+	const float edge = 1.1f;
+	return in_interval(clip[0], -edge, +edge)
+	    && in_interval(clip[1], -edge, +edge)
+	    && in_interval(clip[2],  0.0f,  edge);
 }
 
-bool visible(orbiting *node, mat4 model, camera *cam)
+bool visible(float scl, mat4 model, camera *cam)
 {
 	mat4 mvp;
 	memcpy(mvp, model, sizeof(mat4));
 	mvp[3][3] = 1.0f;
 	glm_mat4_mul(cam->tfm, mvp, mvp);
-	float scl = node->scale;
 	vec4 lbound = { -scl * 0.5f, -scl * 0.5f, -scl * 0.5f, 1.0f };
 	vec4 ubound = { +scl * 0.5f, +scl * 0.5f, +scl * 0.5f, 1.0f };
 	glm_mat4_mulv(mvp, lbound, lbound);
@@ -670,36 +670,78 @@ bool visible(orbiting *node, mat4 model, camera *cam)
 	vec3 uclip;
 	perspective_divide(lbound, lclip);
 	perspective_divide(ubound, uclip);
+	vec3 tmp;
+	memcpy(tmp, lclip, sizeof(vec3));
+	glm_vec3_minv(tmp, uclip, lclip);
+	glm_vec3_maxv(tmp, uclip, uclip);
 	// this should also hide planets
 	// that are much bigger than the screen
 	return in_clip(lclip) || in_clip(uclip);
 }
 
-u32 flatten(orbit_tree *tree, float time, camera *cam)
+int orbit_tree_node_cmp(const void *l_, const void *r_, void *data_)
 {
-	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
+	float *sortkeys = data_;
+	const u32 l = *(u32*) l_;
+	const u32 r = *(u32*) r_;
+	if (sortkeys[l] - sortkeys[r] < 0.0f) {
+		return -1;
+	} else {
+		return +1;
+	}
+}
+
+__attribute__((unused))
+static float time_now_ms()
+{
+	return (float) glfwGetTime() * 1e3f;
+}
+
+u32 flatten(orbit_tree *tree, float time, float dt, camera *cam, u32 *ilod)
+{
+	// fast
 	for (u32 i = 0; i < tree->n_orbit; i++) {
+		memset(tree->worldpos[i], 0, sizeof(vec3));
 		tree->index[i] = i;
 	}
+	// not fast
 	for (u32 i = 0; i < tree->height; i++) {
 		flatten_once(tree, time);
 	}
+	// fast
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
+		float scale = tree->worldpos[i + 1][3];
+		tree->sortkey[i + 1] = glm_vec3_distance2(cam->pos, tree->worldpos[i + 1]) / (scale * scale);
 		tree->index[i] = i + 1;
 	}
-	global_orbit_tree = tree;
-	memcpy(global_camera_position, cam->pos, sizeof(vec3));
-	qsort(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp);
+	// slow
+	qsort_r(tree->index, tree->n_orbit - 1, sizeof(u32), orbit_tree_node_cmp, tree->sortkey);
+	u32 iilod = 0;
 	u32 n_visible = 0;
+	// slower
+	float dist2_max[5] = { 0.0f, 5e1f, 5e3f, 5e4f, INFINITY };
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		u32 sorted = tree->index[i];
 		assert(sorted < tree->n_orbit && sorted != 0);
-		orbit_tree_index(tree, sorted, time, tree->tfm[n_visible]);
-		if (visible(&tree->orbit_specs[sorted], tree->tfm[n_visible], cam)) {
+		mat4 pos;
+		glm_translate_make(pos, tree->worldpos[sorted]);
+		float scale = tree->worldpos[sorted][3];
+		glm_scale(pos, (vec3){ scale, scale, scale });
+		if (visible(scale, pos, cam)) {
+			if (tree->sortkey[sorted] > dist2_max[iilod]) {
+				ilod[iilod++] = n_visible;
+			}
+			if (iilod < 3) {
+				orbit_tree_index(tree, sorted, dt, tree->tfm[n_visible]);
+			} else {
+				memcpy(tree->tfm[n_visible], pos, sizeof(mat4));
+				tree->tfm[n_visible][3][3] = (float) tree->tex[sorted];
+			}
 			n_visible++;
 		}
 	}
-	return n_visible;
+	ilod[iilod] = n_visible;
+	return iilod;
 }
 
 void camera_matrix(camera *cam)
@@ -805,35 +847,20 @@ uploaded_mesh mesh_upload(context *ctx, mesh m,
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	uploaded_mesh *mesh, orbit_tree *tree, camera *cam,
-	vulkan_buffer instbuf, char *mapped)
+	vulkan_buffer instbuf, char *mapped, float dt)
 {
 	// render
 	float now = (float) glfwGetTime();
 	u32 ilod[5];
-	u32 n_visible = flatten(tree, now, cam);
-	ilod[0] = 0;
-	for (u32 i = 1; i < ARRAY_SIZE(ilod); i++) {
-		ilod[i] = n_visible;
-	}
-	u32 iilod = 1;
-	float dist2_max[ARRAY_SIZE(ilod)-2] = { 5e1f, 5e3f, 5e4f };
-	for (u32 i = 0; i < n_visible; i++) {
-		u32 sorted = tree->index[i];
-		float d2 = glm_vec3_distance2(cam->pos, tree->worldpos[sorted]);
-		float s = tree->orbit_specs[sorted].scale;
-		assert(s > 0.0f);
-		if (d2 / (s * s) > dist2_max[iilod-1]) {
-			ilod[iilod++] = i;
-			if (iilod == ARRAY_SIZE(ilod)-1)
-				break;
-		}
-	}
-	printf("   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ", ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
+	u32 nlod = flatten(tree, now, dt, cam, ilod);
+	float render_time = (float) glfwGetTime() - now;
+	printf("    cpu render:%.2fms   l0:%u   l1:%u   l2:%u   l3:%u   l4:%u   ",
+		render_time * 1e3f, ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
 
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
 	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
 	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
-	memcpy(mapped + next_index * inst_size, tree->tfm, n_visible * sizeof(mat4));
+	memcpy(mapped + next_index * inst_size, tree->tfm, ilod[nlod] * sizeof(mat4));
 	// cpu wait for current frame to be done rendering
 	attached_swapchain_swap_buffers(ctx, sc);
 	// recording commands for next frame
@@ -846,7 +873,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam);
 	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
-	for (u32 iilod = 0; iilod < ARRAY_SIZE(ilod)-1; iilod++) {
+	for (u32 iilod = 0; iilod < nlod; iilod++) {
 		if (ilod[iilod] == ilod[iilod+1])
 			continue;
 		vkCmdBindIndexBuffer(cmd, mesh[iilod].indx.handle, 0, VK_INDEX_TYPE_UINT32);
@@ -917,11 +944,23 @@ int main()
 	lifetime loading_lifetime = lifetime_init(&ctx, sc.graphics_queue,
 		VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
 		| VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, 4);
+	loaded_image images[] = {
+		load_image("res/2k_sun.jpg"),
+		load_image("res/2k_ceres_fictional.jpg"),
+		load_image("res/2k_eris_fictional.jpg"),
+		load_image("res/2k_haumea_fictional.jpg"),
+		load_image("res/2k_jupiter.jpg"),
+		load_image("res/2k_makemake_fictional.jpg"),
+		load_image("res/2k_mars.jpg"),
+		load_image("res/2k_mercury.jpg"),
+		load_image("res/2k_moon.jpg"),
+		load_image("res/2k_neptune.jpg"),
+		load_image("res/2k_saturn.jpg"),
+		load_image("res/2k_uranus.jpg"),
+		load_image("res/2k_venus_surface.jpg"),
+	};
 	vulkan_bound_image textures = vulkan_bound_image_upload(&ctx,
-		2, (loaded_image[]){
-			load_image("res/2k_venus_surface.jpg"),
-			load_image("res/2k_mercury.jpg"),
-		}, &loading_lifetime);
+		ARRAY_SIZE(images), images, &loading_lifetime);
 	lifetime_bind_image(&window_lifetime, textures);
 	VkSampler sampler = sampler_create(&ctx);
 	lifetime_bind_sampler(&window_lifetime, sampler);
@@ -944,7 +983,7 @@ int main()
 	lod[3] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
-	orbit_tree tree = orbit_tree_init(1u << 14);
+	orbit_tree tree = orbit_tree_init(1u << 16);
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -12.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
@@ -963,7 +1002,7 @@ int main()
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped);
+		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped, dt);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
