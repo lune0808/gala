@@ -657,6 +657,10 @@ bool visible(float scl, mat4 model, camera *cam)
 	vec3 uclip;
 	perspective_divide(lbound, lclip);
 	perspective_divide(ubound, uclip);
+	vec3 tmp;
+	memcpy(tmp, lclip, sizeof(vec3));
+	glm_vec3_minv(tmp, uclip, lclip);
+	glm_vec3_maxv(tmp, uclip, uclip);
 	// this should also hide planets
 	// that are much bigger than the screen
 	return in_clip(lclip) || in_clip(uclip);
@@ -704,9 +708,11 @@ u32 flatten(orbit_tree *tree, float time, camera *cam)
 	for (u32 i = 0; i < tree->n_orbit - 1; i++) {
 		u32 sorted = tree->index[i];
 		assert(sorted < tree->n_orbit && sorted != 0);
-		orbit_tree_index(tree, sorted, time, tree->tfm[n_visible]);
-		if (visible(tree->worldpos[sorted][3], tree->tfm[n_visible], cam)) {
-			n_visible++;
+		mat4 pos;
+		glm_translate_make(pos, tree->worldpos[sorted]);
+		float scale = tree->worldpos[sorted][3];
+		if (visible(scale, pos, cam)) {
+			orbit_tree_index(tree, sorted, time, tree->tfm[n_visible++]);
 		}
 	}
 	return n_visible;
