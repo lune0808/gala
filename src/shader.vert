@@ -17,16 +17,12 @@ layout(location = 3) in mat4 model_and_data;
 layout(location = 0) out vec3 vert_world_pos;
 layout(location = 1) out vec3 vert_normal;
 layout(location = 2) out vec2 vert_uv;
-layout(location = 3) out vec3 vert_exponents;
-layout(location = 4) out float vert_texindex;
+layout(location = 3) out float vert_texindex;
 
 void main()
 {
 	vert_uv = uv;
 	mat4 model = model_and_data;
-	vert_exponents.x = model[0].w;
-	vert_exponents.y = model[1].w;
-	vert_exponents.z = model[2].w;
 	vert_texindex = model[3].w;
 	model[0].w = 0.0;
 	model[1].w = 0.0;

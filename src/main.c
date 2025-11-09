@@ -488,7 +488,6 @@ typedef struct {
 	float speed;      // running orbit speed
 	vec3 self_axis;   // self rotation axis
 	float self_speed; // self rotation speed
-	vec3 exponents;   // rgb exponents
 	u32 parent;
 } orbiting;
 
@@ -542,8 +541,8 @@ orbit_tree orbit_tree_init(u32 cnt)
 	vec4 *worldpos = (void*) mem;
 	orbiting *orbit_specs = (void*) (mem + n_orbit * sizeof(vec4));
 	u32 *parent = (void*) (mem + n_orbit * (sizeof(orbiting) + sizeof(vec4)));
-	orbit_specs[0] = (orbiting){ {}, 0.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, {1.0f, 1.0f, 1.0f}, 0 };
-	orbit_specs[1] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, {1.0f, 1.4f, 1.0f}, 0 };
+	orbit_specs[0] = (orbiting){ {}, 0.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f}, 0.0f, 0 };
+	orbit_specs[1] = (orbiting){ {}, 1.0f, {0.0f, 0.0f, 1.0f}, 0.0f, {0.0f, 0.0f, 1.0f}, 1.0f, 0 };
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
@@ -553,9 +552,10 @@ orbit_tree orbit_tree_init(u32 cnt)
 		o->speed = rand_float(0.5f, 0.65f);
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
-		rand_vec3_shell(0.2f * PI, 0.3f * PI, 0.8f, 1.3f, o->exponents);
-		glm_vec3_abs(o->exponents, o->exponents);
 		o->parent = 1;
+	}
+	for (u32 i = 0; i < n_orbit; i++) {
+		parent[i] = i;
 	}
 	return (orbit_tree){ 2, n_orbit, worldpos, orbit_specs, parent, xmalloc(n_orbit * sizeof(mat4)) };
 }
@@ -588,10 +588,29 @@ void orbit_tree_index(orbit_tree *tree, u32 i, float time, mat4 dest)
 	float scale = orbit->scale;
 	glm_scale(dest, (vec3){ scale, scale, scale });
 	memcpy(dest[3], tree->worldpos[i], sizeof(vec3));
-	dest[0][3] = orbit->exponents[0];
-	dest[1][3] = orbit->exponents[1];
-	dest[2][3] = orbit->exponents[2];
 	dest[3][3] = (float) (i & 1);
+}
+
+static orbit_tree *global_orbit_tree;
+static vec3 global_camera_position;
+
+int orbit_tree_node_cmp(const void *l_, const void *r_)
+{
+	vec3 camera_pos;
+	memcpy(camera_pos, global_camera_position, sizeof(vec3));
+	orbit_tree *tree = global_orbit_tree;
+	const u32 *l = l_;
+	const u32 *r = r_;
+	float dl2 = glm_vec3_distance2(camera_pos, tree->worldpos[*l]);
+	float dr2 = glm_vec3_distance2(camera_pos, tree->worldpos[*r]);
+	float diff = dl2 - dr2;
+	if (diff < 0.0f) {
+		return -1;
+	} else if (diff == 0.0f) {
+		return 0;
+	} else {
+		return +1;
+	}
 }
 
 void flatten(orbit_tree *tree, float time)
@@ -599,13 +618,19 @@ void flatten(orbit_tree *tree, float time)
 	memset(tree->worldpos, 0, tree->n_orbit * sizeof(vec4));
 	for (u32 i = 0; i < tree->n_orbit; i++) {
 		tree->index[i] = i;
-		// tree->orbit_specs[i].speed = 0.0f;
 	}
 	for (u32 i = 0; i < tree->height; i++) {
 		flatten_once(tree, time);
 	}
 	for (u32 i = 0; i < tree->n_orbit; i++) {
-		orbit_tree_index(tree, i, time, tree->tfm[i]);
+		tree->index[i] = i;
+	}
+	global_orbit_tree = tree;
+	qsort(tree->index, tree->n_orbit, sizeof(u32), orbit_tree_node_cmp);
+	for (u32 i = 0; i < tree->n_orbit; i++) {
+		u32 j = tree->index[i];
+		assert(j < tree->n_orbit);
+		orbit_tree_index(tree, j, time, tree->tfm[i]);
 	}
 }
 
@@ -700,19 +725,6 @@ void camera_update(camera *cam, context *ctx, float dt)
 void push_constant_populate(struct push_constant_data *pushc, camera *cam)
 {
 	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
-#if 0
-		orbit_tree_index(tree, i, now, pushc->model);
-
-		glm_mat4_mul(cam->tfm, pushc->model, pushc->mvp);
-		glm_mat4_inv(pushc->model, pushc->normalmat);
-		glm_mat4_transpose(pushc->normalmat);
-		memcpy(pushc->normalmat[3], cam->pos, sizeof(vec3));
-		pushc->normalmat[3][3] = 0.02f;
-		pushc->normalmat[0][3] = tree->orbit_specs[i].exponents[0];
-		pushc->normalmat[1][3] = tree->orbit_specs[i].exponents[1];
-		pushc->normalmat[2][3] = tree->orbit_specs[i].exponents[2];
-		pushc->tex = (float) (i & 1);
-#endif
 }
 
 typedef struct {
@@ -735,12 +747,21 @@ uploaded_mesh mesh_upload(context *ctx, mesh m,
 }
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
-	uploaded_mesh mesh, orbit_tree *tree, camera *cam,
+	uploaded_mesh *mesh, orbit_tree *tree, camera *cam,
 	vulkan_buffer instbuf, char *mapped)
 {
 	// render
 	float now = (float) glfwGetTime();
+	memcpy(global_camera_position, cam->pos, sizeof(vec3));
 	flatten(tree, now);
+	u32 ilod;
+	for (ilod = 0; ilod < tree->n_orbit; ilod++) {
+		float z2 = glm_vec3_distance2(cam->pos, tree->tfm[ilod][3]);
+		if (z2 > 20.0f) {
+			break;
+		}
+	}
+
 	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
 	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
 	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
@@ -754,16 +775,28 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
-	VkBuffer buffers[] = { mesh.vert.handle, instbuf.handle };
-	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
-	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
-	vkCmdBindIndexBuffer(cmd, mesh.indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam);
 	vkCmdPushConstants(cmd, pipe->layout,
 		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		0, sizeof(pushc), &pushc);
-	vkCmdDrawIndexed(cmd, (u32) mesh.indx.size / sizeof(u32), tree->n_orbit, 0, 0, 0);
+	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
+	{
+		if (ilod == 0) goto skip0;
+		vkCmdBindIndexBuffer(cmd, mesh[0].indx.handle, 0, VK_INDEX_TYPE_UINT32);
+		VkBuffer buffers[] = { mesh[0].vert.handle, instbuf.handle };
+		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+		vkCmdDrawIndexed(cmd, (u32) mesh[0].indx.size / sizeof(u32), ilod, 0, 0, 0);
+	}
+skip0:
+	{
+		if (ilod == tree->n_orbit) goto skip1;
+		vkCmdBindIndexBuffer(cmd, mesh[1].indx.handle, 0, VK_INDEX_TYPE_UINT32);
+		VkBuffer buffers[] = { mesh[1].vert.handle, instbuf.handle };
+		vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+		vkCmdDrawIndexed(cmd, (u32) mesh[1].indx.size / sizeof(u32), tree->n_orbit - ilod, 0, 0, ilod);
+	}
+skip1:
 	command_buffer_end(cmd);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
@@ -832,8 +865,13 @@ int main()
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
+	uploaded_mesh lod[2];
 	mesh m = uv_sphere(64, 48, 0.5f);
-	uploaded_mesh um = mesh_upload(&ctx, m,
+	lod[0] = mesh_upload(&ctx, m,
+		&loading_lifetime, &window_lifetime);
+	mesh_fini(&m);
+	m = uv_sphere(16, 12, 0.5f);
+	lod[1] = mesh_upload(&ctx, m,
 		&loading_lifetime, &window_lifetime);
 	mesh_fini(&m);
 	orbit_tree tree = orbit_tree_init(1u << 12);
@@ -850,11 +888,12 @@ int main()
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	void *mapped = buffer_map(&ctx, instbuf);
+
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, um, &tree, &cam, instbuf, mapped);
+		draw(&ctx, &sc, &pipe, lod, &tree, &cam, instbuf, mapped);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);

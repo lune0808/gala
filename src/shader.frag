@@ -12,8 +12,7 @@ layout(push_constant) uniform draw_data {
 layout(location = 0) in vec3 vert_world_pos;
 layout(location = 1) in vec3 vert_normal;
 layout(location = 2) in vec2 vert_uv;
-layout(location = 3) in vec3 vert_exponents;
-layout(location = 4) in float vert_texindex;
+layout(location = 3) in float vert_texindex;
 
 // attachments
 layout(location = 0) out vec4 frag_color;
@@ -21,12 +20,11 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
 	vec3 color = texture(tex, vec3(vert_uv, vert_texindex)).rgb;
-	color = pow(color, vert_exponents);
 	vec3 source = vec3(0.0);
 	vec3 normal = normalize(vert_normal);
 	vec3 to_light = normalize(source - vert_world_pos);
 	float diffuse = pow(max(0.0, dot(to_light, normal)), 8.0);
-	float ambient = 0.02;
+	float ambient = 0.02f;
 	frag_color = vec4((ambient + diffuse) * color, 1.0);
 }
 
