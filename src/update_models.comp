@@ -60,6 +60,16 @@ void main()
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
 	model[3].w = spec.texindex[node];
-	result.model[info.baseindex * MAX_ITEMS_PER_FRAME + node] = model;
+	uint model_index = info.baseindex * MAX_ITEMS_PER_FRAME + node;
+	result.model[model_index] = model;
+	uint lod_index = 3;
+	uint draw_index = info.baseindex * MAX_LOD + lod_index;
+	atomicAdd(draw[draw_index].instanceCount, 1);
+	if (node < MAX_LOD) {
+		uint next_draw_index =
+			((info.baseindex + 1) % MAX_FRAMES_RENDERING) * MAX_LOD
+			+ lod_index;
+		draw[next_draw_index].instanceCount = 0;
+	}
 }
 

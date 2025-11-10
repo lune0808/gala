@@ -1174,12 +1174,13 @@ int main()
 	lifetime_bind_buffer(&window_lifetime, instbuf);
 	VkDrawIndexedIndirectCommand (*drawmapped)[ARRAY_SIZE(m)] =
 		xmalloc(MAX_FRAMES_RENDERING * sizeof(*drawmapped));
+
 	for (u32 iframe = 0; iframe < MAX_FRAMES_RENDERING; iframe++) {
 		VkDrawIndexedIndirectCommand *draws = drawmapped[iframe];
 		for (u32 idraw = 0; idraw < ARRAY_SIZE(m); idraw++) {
 			draws[idraw].indexCount =
 				lods.ibase[idraw+1] - lods.ibase[idraw];
-			draws[idraw].instanceCount = (idraw == 3)? tree.n_orbit: 0;
+			draws[idraw].instanceCount = 0;
 			draws[idraw].firstIndex = lods.ibase[idraw];
 			draws[idraw].vertexOffset = (i32) lods.vbase[idraw];
 			draws[idraw].firstInstance = 0;
