@@ -20,6 +20,7 @@ struct push_constant_data {
 #define MAX_ITEMS_PER_FRAME (1 << 20)
 #define MAX_ITEMS (MAX_ITEMS_PER_FRAME * MAX_FRAMES_RENDERING)
 #define MAX_LOD (4)
+#define MAX_DRAW (MAX_LOD * MAX_FRAMES_RENDERING)
 #define LOCAL_SIZE (64)
 
 struct orbit_spec {

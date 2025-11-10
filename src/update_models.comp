@@ -8,12 +8,11 @@ layout(std430, set = 0, binding = 0) readonly restrict buffer orbit_spec_data {
 	orbit_spec spec;
 };
 
-layout(std140, set = 0, binding = 1) restrict writeonly buffer orbit_tfm {
+layout(std430, set = 0, binding = 1) writeonly restrict buffer orbit_tfm {
 	mat4 model[MAX_ITEMS];
 } result;
 
-/*
-struct draw_indirect_data {
+struct VkDrawIndexedIndirectCommand {
 	uint indexCount;
 	uint instanceCount;
 	uint firstIndex;
@@ -21,13 +20,12 @@ struct draw_indirect_data {
 	uint firstInstance;
 };
 
-layout(std340, set = 1, binding = 2) writeonly restrict buffer draw_commands {
-	draw_indirect_data draw;
+layout(std430, set = 0, binding = 2) writeonly restrict buffer draw_commands {
+	VkDrawIndexedIndirectCommand draw[MAX_DRAW];
 };
-*/
 
-layout(push_constant) uniform info {
-	push_constant_data draw;
+layout(push_constant) uniform info_t {
+	push_constant_data info;
 };
 
 vec3 rotate_axis_angle(vec3 v, float amount, vec3 axis)
@@ -41,10 +39,10 @@ vec3 flatten(uint node)
 {
 	vec3 pos = vec3(0.0);
 	uint cur_index = node;
-	for (uint iter = 0; iter < draw.tree_height; iter++) {
+	for (uint iter = 0; iter < info.tree_height; iter++) {
 		pos += rotate_axis_angle(
 			spec.startoffset[cur_index].xyz,
-			spec.orbitspeed[cur_index] * draw.time,
+			spec.orbitspeed[cur_index] * info.time,
 			spec.orbitaxis[cur_index].xyz);
 		cur_index = spec.parent[cur_index];
 	}
@@ -62,6 +60,6 @@ void main()
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
 	model[3].w = spec.texindex[node];
-	result.model[draw.baseindex + node] = model;
+	result.model[info.baseindex * MAX_ITEMS_PER_FRAME + node] = model;
 }
 

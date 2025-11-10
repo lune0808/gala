@@ -461,7 +461,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 }
 
 pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
-	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm)
+	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm, vulkan_buffer drawbuf)
 {
 	VkShaderModule module;
 	VkPipelineShaderStageCreateInfo stg_desc;
@@ -479,13 +479,19 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 			.descriptorCount = 1,
 			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 		},
+		{
+			.binding = 2,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
 	};
 	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(
 		device, ARRAY_SIZE(bind_desc), bind_desc);
 	VkDescriptorPoolSize pool_size[] = {
 		{
 			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 2,
+			.descriptorCount = 3,
 		},
 	};
 	VkDescriptorPool dpool = descr_pool_create(
@@ -508,7 +514,7 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			.descriptorCount = 1,
 			.pBufferInfo = &(VkDescriptorBufferInfo){
-				orbit_spec.handle, 0, orbit_spec.size
+				orbit_spec.handle, 0, orbit_spec.size,
 			},
 		},
 		{
@@ -519,7 +525,18 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			.descriptorCount = 1,
 			.pBufferInfo = &(VkDescriptorBufferInfo){
-				orbit_tfm.handle, 0, orbit_tfm.size
+				orbit_tfm.handle, 0, orbit_tfm.size,
+			},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 2,
+			.dstArrayElement = 0,
+			.dstSet = set[0],
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &(VkDescriptorBufferInfo){
+				drawbuf.handle, 0, drawbuf.size,
 			},
 		},
 	};
@@ -941,7 +958,7 @@ void push_constant_populate(struct push_constant_data *pushc, camera *cam,
 	u32 index, float time, float dt, u32 tree_height, u32 tree_n)
 {
 	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
-	pushc->baseindex = index * MAX_ITEMS_PER_FRAME;
+	pushc->baseindex = index;
 	pushc->time = time;
 	pushc->dt = dt;
 	pushc->tree_height = tree_height;
@@ -1175,7 +1192,7 @@ int main()
 	free(drawmapped);
 	lifetime_bind_buffer(&window_lifetime, drawbuf);
 	pipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
-		ctx.device, orbit_spec, instbuf);
+		ctx.device, orbit_spec, instbuf, drawbuf);
 	lifetime_fini(&loading_lifetime, &ctx);
 	orbit_tree_fini(&tree);
 	free(lods.vbase);
