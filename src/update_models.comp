@@ -52,6 +52,11 @@ vec3 flatten(uint node)
 shared uint nlod[MAX_LOD];
 shared uint ilod[MAX_LOD];
 
+uint best_lod(uint inode, vec3 pos, float scale)
+{
+	return 3 - (inode & 1);
+}
+
 void main()
 {
 	if (gl_LocalInvocationID.x == 0) {
@@ -62,12 +67,12 @@ void main()
 	memoryBarrierShared();
 
 	uint inode = gl_GlobalInvocationID.x;
-	uint best = 3;
 	uint wdraw = info.baseindex * MAX_DRAW_PER_FRAME
 		   + gl_WorkGroupID.x * MAX_LOD;
-	uint idraw = wdraw + best;
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
+	uint best = best_lod(inode, pos, scale);
+	uint idraw = wdraw + best;
 	mat4 model;
 	model[0] = vec4(scale, 0.0, 0.0, 0.0);
 	model[1] = vec4(0.0, scale, 0.0, 0.0);
