@@ -123,6 +123,7 @@ static u32 extension_match(VkPhysicalDevice dev,
 
 static void init_glfw()
 {
+	glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
 	if (glfwInit() != GLFW_TRUE)
 		crash("glfwInit");
 }
