@@ -1041,7 +1041,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
 	VkDeviceSize offsets[] = { 0,
-		((sc->frame_indx - 1) % MAX_FRAMES_RENDERING)
+		0 * ((sc->frame_indx - 1) % MAX_FRAMES_RENDERING)
 		* tree->n_orbit * sizeof(mat4) };
 	VkBuffer buffers[] = { mesh->vert.handle, instbuf.handle };
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
@@ -1148,7 +1148,7 @@ int main()
 	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
 		&loading_lifetime, &window_lifetime);
 	free(mesh_storage);
-	orbit_tree tree = orbit_tree_init(1u << 16);
+	orbit_tree tree = orbit_tree_init((1u << 16) - 1);
 	camera cam = camera_init(sc.base.dim,
 		(vec3){ 0.0f, -12.0f, 2.0f },
 		(vec3){ 0.0f, 0.0f, 0.0f },
