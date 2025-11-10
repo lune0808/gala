@@ -55,8 +55,7 @@ void main()
 {
 	uint node = gl_GlobalInvocationID.x;
 	vec3 pos = flatten(node);
-	// float scale = spec.itemscale[node];
-	float scale = 1.0;
+	float scale = spec.itemscale[node];
 	mat4 model;
 	model[0] = vec4(scale, 0.0, 0.0, 0.0);
 	model[1] = vec4(0.0, scale, 0.0, 0.0);
