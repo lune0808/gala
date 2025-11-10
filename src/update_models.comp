@@ -2,7 +2,7 @@
 
 #include "shared.h"
 
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = LOCAL_SIZE, local_size_y = 1, local_size_z = 1) in;
 
 layout(std140, set = 0, binding = 0) readonly restrict buffer orbit_spec_data {
 	orbit_spec spec;
@@ -55,12 +55,13 @@ void main()
 {
 	uint node = gl_GlobalInvocationID.x;
 	vec3 pos = flatten(node);
-	float scale = spec.itemscale[node];
+	// float scale = spec.itemscale[node];
+	float scale = 1.0;
 	mat4 model;
 	model[0] = vec4(scale, 0.0, 0.0, 0.0);
 	model[1] = vec4(0.0, scale, 0.0, 0.0);
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
-	result.model[node] = model;
+	result.model[draw.baseindex + node] = model;
 }
 

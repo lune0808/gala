@@ -1026,7 +1026,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		VK_SHADER_STAGE_FRAGMENT_BIT;
 	vkCmdPushConstants(rcmd, gpipe->layout,
 		shaders, 0, sizeof(pushc), &pushc);
-	vkCmdDispatch(rcmd, tree->n_orbit, 1, 1);
+	vkCmdDispatch(rcmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
 	if (vkEndCommandBuffer(rcmd) != VK_SUCCESS)
 		crash("vkEndCommandBuffer");
 	VkSubmitInfo render_submission_desc = {
