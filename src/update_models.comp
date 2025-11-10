@@ -4,7 +4,7 @@
 
 layout(local_size_x = LOCAL_SIZE, local_size_y = 1, local_size_z = 1) in;
 
-layout(std140, set = 0, binding = 0) readonly restrict buffer orbit_spec_data {
+layout(std430, set = 0, binding = 0) readonly restrict buffer orbit_spec_data {
 	orbit_spec spec;
 };
 
@@ -62,6 +62,7 @@ void main()
 	model[1] = vec4(0.0, scale, 0.0, 0.0);
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
+	model[3].w = spec.texindex[node];
 	result.model[draw.baseindex + node] = model;
 }
 

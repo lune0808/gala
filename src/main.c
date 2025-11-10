@@ -1147,13 +1147,12 @@ int main()
 	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
 		&loading_lifetime, &window_lifetime);
 	free(mesh_storage);
-	orbit_tree tree = orbit_tree_init((1u << 16) - 1);
-	camera cam = camera_init(sc.base.dim,
-		(vec3){ 0.0f, -12.0f, 2.0f },
-		(vec3){ 0.0f, 0.0f, 0.0f },
-		ctx.window
-	);
+	orbit_tree tree = orbit_tree_init((1u << 8) - 1);
 	assert(tree.n_orbit < MAX_ITEMS);
+	vulkan_buffer orbit_spec = data_upload(&ctx,
+		sizeof(struct orbit_spec), tree.uploading_orbit_specs,
+		&loading_lifetime, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+	lifetime_bind_buffer(&window_lifetime, orbit_spec);
 	vulkan_buffer instbuf = buffer_create(&ctx,
 		MAX_ITEMS * sizeof(mat4),
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -1178,10 +1177,6 @@ int main()
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	free(drawmapped);
 	lifetime_bind_buffer(&window_lifetime, drawbuf);
-	vulkan_buffer orbit_spec = data_upload(&ctx,
-		sizeof(struct orbit_spec), tree.uploading_orbit_specs,
-		&loading_lifetime, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-	lifetime_bind_buffer(&window_lifetime, orbit_spec);
 	pipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
 		ctx.device, orbit_spec, instbuf);
 	lifetime_fini(&loading_lifetime, &ctx);
@@ -1189,6 +1184,11 @@ int main()
 	free(lods.vbase);
 
 	float dt = 0.0f;
+	camera cam = camera_init(sc.base.dim,
+		(vec3){ 0.0f, -12.0f, 2.0f },
+		(vec3){ 0.0f, 0.0f, 0.0f },
+		ctx.window
+	);
 	context_ignore_mouse_once(&ctx);
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
