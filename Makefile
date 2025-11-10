@@ -30,7 +30,7 @@ OBJ = $(SRC:src/%=bin/%.o)
 SPV = $(SRC_SHDR:src/%=bin/%.spv)
 OBJ_NOMAIN = $(SRC_NOMAIN:src/%=bin/%.o)
 
-DEP = $(SRC:src/%=bin/%.d) $(HDR:inc/%=bin/%.d)
+DEP = $(SRC:src/%=bin/%.d) $(HDR:inc/%=bin/%.d) $(SPV:%=%.d)
 
 all:: $(BINDIR) $(GCH) $(BIN_PATH) $(SPV)
 

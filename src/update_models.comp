@@ -49,17 +49,23 @@ vec3 flatten(uint node)
 	return pos;
 }
 
+shared uint nlod[MAX_LOD];
+shared uint ilod[MAX_LOD];
+
 void main()
 {
-	uint inode = gl_GlobalInvocationID.x;
-	uint ilod = 3;
-	uint idraw = info.baseindex * MAX_LOD + ilod;
-	if (inode == 0) {
-		draw[idraw].instanceCount = 0;
-		draw[idraw].firstInstance = 0;
+	if (gl_LocalInvocationID.x == 0) {
+		for (uint i = 0; i < MAX_LOD; i++) {
+			nlod[i] = 0;
+		}
 	}
-	memoryBarrier();
+	memoryBarrierShared();
 
+	uint inode = gl_GlobalInvocationID.x;
+	uint best = 3;
+	uint wdraw = info.baseindex * MAX_DRAW_PER_FRAME
+		   + gl_WorkGroupID.x * MAX_LOD;
+	uint idraw = wdraw + best;
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
 	mat4 model;
@@ -68,8 +74,35 @@ void main()
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
 	model[3].w = spec.texindex[inode];
-	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;
+	uint local = atomicAdd(nlod[best], 1);
+	uint wmodel = info.baseindex * MAX_ITEMS_PER_FRAME
+		    + gl_WorkGroupID.x * LOCAL_SIZE;
+
+	memoryBarrierShared();
+	if (gl_LocalInvocationID.x == 0) {
+		uint nlod0 = nlod[0];
+		uint nlod1 = nlod[1];
+		uint nlod2 = nlod[2];
+		uint nlod3 = nlod[3];
+		uint ilod0 = wmodel;
+		uint ilod1 = ilod0 + nlod0;
+		uint ilod2 = ilod1 + nlod1;
+		uint ilod3 = ilod2 + nlod2;
+		ilod[0] = ilod0;
+		ilod[1] = ilod1;
+		ilod[2] = ilod2;
+		ilod[3] = ilod3;
+	}
+	memoryBarrierShared();
+
+	uint imodel = ilod[best] + local;
 	result.model[imodel] = model;
-	atomicAdd(draw[idraw].instanceCount, 1);
+
+	if (gl_LocalInvocationID.x == 0) {
+		for (uint i = 0; i < MAX_LOD; i++) {
+			draw[wdraw + i].instanceCount = nlod[i];
+			draw[wdraw + i].firstInstance = ilod[i];
+		}
+	}
 }
 
