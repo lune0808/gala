@@ -1040,9 +1040,8 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
-	VkDeviceSize offsets[] = { 0,
-		0 * ((sc->frame_indx - 1) % MAX_FRAMES_RENDERING)
-		* tree->n_orbit * sizeof(mat4) };
+	VkDeviceSize inst_indx = (sc->frame_indx - 1) % MAX_FRAMES_RENDERING;
+	VkDeviceSize offsets[] = { 0, inst_indx * MAX_ITEMS_PER_FRAME * sizeof(mat4) };
 	VkBuffer buffers[] = { mesh->vert.handle, instbuf.handle };
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
@@ -1154,8 +1153,9 @@ int main()
 		(vec3){ 0.0f, 0.0f, 0.0f },
 		ctx.window
 	);
+	assert(tree.n_orbit < MAX_ITEMS);
 	vulkan_buffer instbuf = buffer_create(&ctx,
-		MAX_FRAMES_RENDERING * tree.n_orbit * sizeof(mat4),
+		MAX_ITEMS * sizeof(mat4),
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	lifetime_bind_buffer(&window_lifetime, instbuf);

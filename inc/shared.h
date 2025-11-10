@@ -23,12 +23,12 @@ struct push_constant_data {
 #define LOCAL_SIZE (64)
 
 struct orbit_spec {
-	vec4 startoffset[MAX_ITEMS];
-	vec4 orbitaxis[MAX_ITEMS];
-	float orbitspeed[MAX_ITEMS];
-	float itemscale[MAX_ITEMS];
-	float texindex[MAX_ITEMS];
-	uint parent[MAX_ITEMS];
+	vec4 startoffset[MAX_ITEMS_PER_FRAME];
+	vec4 orbitaxis[MAX_ITEMS_PER_FRAME];
+	float orbitspeed[MAX_ITEMS_PER_FRAME];
+	float itemscale[MAX_ITEMS_PER_FRAME];
+	float texindex[MAX_ITEMS_PER_FRAME];
+	uint parent[MAX_ITEMS_PER_FRAME];
 };
 
 #endif /* GALA_SHARED_H */
