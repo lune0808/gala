@@ -20,8 +20,10 @@ struct push_constant_data {
 #define MAX_ITEMS_PER_FRAME (1 << 20)
 #define MAX_ITEMS (MAX_ITEMS_PER_FRAME * MAX_FRAMES_RENDERING)
 #define MAX_LOD (4)
-#define MAX_DRAW (MAX_LOD * MAX_FRAMES_RENDERING)
 #define LOCAL_SIZE (64)
+#define CHUNK_COUNT (MAX_ITEMS_PER_FRAME / LOCAL_SIZE)
+#define MAX_DRAW_PER_FRAME (MAX_LOD * CHUNK_COUNT)
+#define MAX_DRAW (MAX_DRAW_PER_FRAME * MAX_FRAMES_RENDERING)
 
 struct orbit_spec {
 	vec4 startoffset[MAX_ITEMS_PER_FRAME];

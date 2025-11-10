@@ -1035,7 +1035,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	};
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-		VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+		VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
 		0,
 		0, NULL,
 		1, &barrier_desc,
@@ -1061,8 +1061,8 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
 	vkCmdDrawIndexedIndirect(cmd,
 		drawbuf.handle,
-		sc->frame_indx * 4 * sizeof(VkDrawIndexedIndirectCommand),
-		4,
+		sc->frame_indx * MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
+		MAX_DRAW_PER_FRAME,
 		sizeof(VkDrawIndexedIndirectCommand)
 	);
 	vkCmdEndRenderPass(cmd);
@@ -1172,22 +1172,25 @@ int main()
 		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	lifetime_bind_buffer(&window_lifetime, instbuf);
-	VkDrawIndexedIndirectCommand (*drawmapped)[ARRAY_SIZE(m)] =
-		xmalloc(MAX_FRAMES_RENDERING * sizeof(*drawmapped));
+	VkDrawIndexedIndirectCommand *drawmapped =
+		xmalloc(MAX_DRAW * sizeof(*drawmapped));
 
-	for (u32 iframe = 0; iframe < MAX_FRAMES_RENDERING; iframe++) {
-		VkDrawIndexedIndirectCommand *draws = drawmapped[iframe];
-		for (u32 idraw = 0; idraw < ARRAY_SIZE(m); idraw++) {
-			draws[idraw].indexCount =
-				lods.ibase[idraw+1] - lods.ibase[idraw];
-			draws[idraw].instanceCount = 0;
-			draws[idraw].firstIndex = lods.ibase[idraw];
-			draws[idraw].vertexOffset = (i32) lods.vbase[idraw];
-			draws[idraw].firstInstance = 0;
+	for (u32 i = 0, iframe = 0; iframe < MAX_FRAMES_RENDERING; iframe++) {
+		for (u32 ichunk = 0; ichunk < CHUNK_COUNT; ichunk++) {
+			for (u32 ilod = 0; ilod < MAX_LOD; ilod++) {
+				drawmapped[i].indexCount =
+					lods.ibase[ilod+1] - lods.ibase[ilod];
+				drawmapped[i].instanceCount = 0;
+				drawmapped[i].firstIndex = lods.ibase[ilod];
+				drawmapped[i].vertexOffset = (i32) lods.vbase[ilod];
+				drawmapped[i].firstInstance = 0;
+				i++;
+			}
 		}
 	}
+
 	vulkan_buffer drawbuf = data_upload(&ctx,
-		MAX_FRAMES_RENDERING * sizeof(*drawmapped), drawmapped,
+		MAX_DRAW * sizeof(*drawmapped), drawmapped,
 		&loading_lifetime,
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	free(drawmapped);

@@ -52,6 +52,14 @@ vec3 flatten(uint node)
 void main()
 {
 	uint inode = gl_GlobalInvocationID.x;
+	uint ilod = 3;
+	uint idraw = info.baseindex * MAX_LOD + ilod;
+	if (inode == 0) {
+		draw[idraw].instanceCount = 0;
+		draw[idraw].firstInstance = 0;
+	}
+	memoryBarrier();
+
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
 	mat4 model;
@@ -62,14 +70,6 @@ void main()
 	model[3].w = spec.texindex[inode];
 	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;
 	result.model[imodel] = model;
-	uint ilod = 3;
-	uint idraw = info.baseindex * MAX_LOD + ilod;
 	atomicAdd(draw[idraw].instanceCount, 1);
-	if (inode < MAX_LOD) {
-		uint next_draw_index =
-			((info.baseindex + 1) % MAX_FRAMES_RENDERING) * MAX_LOD
-			+ ilod;
-		draw[next_draw_index].instanceCount = 0;
-	}
 }
 
