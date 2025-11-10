@@ -38,37 +38,37 @@ vec3 rotate_axis_angle(vec3 v, float amount, vec3 axis)
 vec3 flatten(uint node)
 {
 	vec3 pos = vec3(0.0);
-	uint cur_index = node;
+	uint icur = node;
 	for (uint iter = 0; iter < info.tree_height; iter++) {
 		pos += rotate_axis_angle(
-			spec.startoffset[cur_index].xyz,
-			spec.orbitspeed[cur_index] * info.time,
-			spec.orbitaxis[cur_index].xyz);
-		cur_index = spec.parent[cur_index];
+			spec.startoffset[icur].xyz,
+			spec.orbitspeed[icur] * info.time,
+			spec.orbitaxis[icur].xyz);
+		icur = spec.parent[icur];
 	}
 	return pos;
 }
 
 void main()
 {
-	uint node = gl_GlobalInvocationID.x;
-	vec3 pos = flatten(node);
-	float scale = spec.itemscale[node];
+	uint inode = gl_GlobalInvocationID.x;
+	vec3 pos = flatten(inode);
+	float scale = spec.itemscale[inode];
 	mat4 model;
 	model[0] = vec4(scale, 0.0, 0.0, 0.0);
 	model[1] = vec4(0.0, scale, 0.0, 0.0);
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
-	model[3].w = spec.texindex[node];
-	uint model_index = info.baseindex * MAX_ITEMS_PER_FRAME + node;
-	result.model[model_index] = model;
-	uint lod_index = 3;
-	uint draw_index = info.baseindex * MAX_LOD + lod_index;
-	atomicAdd(draw[draw_index].instanceCount, 1);
-	if (node < MAX_LOD) {
+	model[3].w = spec.texindex[inode];
+	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;
+	result.model[imodel] = model;
+	uint ilod = 3;
+	uint idraw = info.baseindex * MAX_LOD + ilod;
+	atomicAdd(draw[idraw].instanceCount, 1);
+	if (inode < MAX_LOD) {
 		uint next_draw_index =
 			((info.baseindex + 1) % MAX_FRAMES_RENDERING) * MAX_LOD
-			+ lod_index;
+			+ ilod;
 		draw[next_draw_index].instanceCount = 0;
 	}
 }
