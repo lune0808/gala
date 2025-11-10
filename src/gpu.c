@@ -69,6 +69,8 @@ static u32 gpu_specs_score(gpu_specs specs)
 {
 	if (!specs->features.samplerAnisotropy)
 		return 0;
+	if (!specs->features.multiDrawIndirect)
+		return 0;
 	if (specs->iq_graphics == UINT32_MAX)
 		return 0;
 	if (specs->iq_compute == UINT32_MAX)
@@ -243,6 +245,7 @@ static VkDevice vulkan_logical_device(VkPhysicalDevice physical,
 	};
 	VkPhysicalDeviceFeatures features = {
 		.samplerAnisotropy = VK_TRUE,
+		.multiDrawIndirect = VK_TRUE,
 	};
 	VkDeviceCreateInfo device_desc = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,

@@ -7,9 +7,8 @@
 #include "gpu.h"
 #include "hwqueue.h"
 #include "image.h"
+#include "shared.h"
 
-
-#define MAX_FRAMES_RENDERING (2)
 
 typedef struct {
 	VkSwapchainKHR handle;

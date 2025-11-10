@@ -425,7 +425,8 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 		.pushConstantRangeCount = 1,
 		.pPushConstantRanges = &(VkPushConstantRange){
 			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
-				    | VK_SHADER_STAGE_FRAGMENT_BIT,
+				    | VK_SHADER_STAGE_FRAGMENT_BIT
+				    | VK_SHADER_STAGE_COMPUTE_BIT,
 			.offset = 0,
 			.size = sizeof(struct push_constant_data),
 		},
@@ -457,6 +458,103 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	vkDestroyShaderModule(logical, shader_module[0], NULL);
 	vkDestroyShaderModule(logical, shader_module[1], NULL);
 	return (pipeline){ gpipe, unif_lyt, set_lyt, dpool, set };
+}
+
+pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
+	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm)
+{
+	VkShaderModule module;
+	VkPipelineShaderStageCreateInfo stg_desc;
+	pipeline_stage_desc(device, 1, &stg_desc, &module, &comp_path);
+	VkDescriptorSetLayoutBinding bind_desc[] = {
+		{
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
+		{
+			.binding = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
+	};
+	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(
+		device, ARRAY_SIZE(bind_desc), bind_desc);
+	VkDescriptorPoolSize pool_size[] = {
+		{
+			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 2,
+		},
+	};
+	VkDescriptorPool dpool = descr_pool_create(
+		device, ARRAY_SIZE(pool_size), pool_size);
+	VkDescriptorSet *set = xmalloc(sizeof(*set));
+	VkDescriptorSetAllocateInfo set_alloc_desc = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = dpool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &set_lyt,
+	};
+	if (vkAllocateDescriptorSets(device, &set_alloc_desc, set) != VK_SUCCESS)
+		crash("vkAllocateDescriptorSets");
+	VkWriteDescriptorSet write_desc[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.dstSet = set[0],
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &(VkDescriptorBufferInfo){
+				orbit_spec.handle, 0, orbit_spec.size
+			},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 1,
+			.dstArrayElement = 0,
+			.dstSet = set[0],
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &(VkDescriptorBufferInfo){
+				orbit_tfm.handle, 0, orbit_tfm.size
+			},
+		},
+	};
+	vkUpdateDescriptorSets(device,
+		ARRAY_SIZE(write_desc), write_desc,
+		0, NULL
+	);
+	VkPipelineLayoutCreateInfo pipe_lyt_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &set_lyt,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &(VkPushConstantRange){
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
+				    | VK_SHADER_STAGE_VERTEX_BIT
+				    | VK_SHADER_STAGE_FRAGMENT_BIT,
+			.offset = 0,
+			.size = sizeof(struct push_constant_data),
+		},
+	};
+	VkPipelineLayout pipe_lyt;
+	if (vkCreatePipelineLayout(device, &pipe_lyt_desc,
+		NULL, &pipe_lyt) != VK_SUCCESS)
+		crash("vkCreatePipelineLayout");
+	VkComputePipelineCreateInfo pipe_desc = {
+		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		.stage = stg_desc,
+		.layout = pipe_lyt,
+	};
+	VkPipeline pipe;
+	if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipe_desc, NULL,
+		&pipe) != VK_SUCCESS)
+		crash("vkCreateComputePipelines");
+	vkDestroyShaderModule(device, module, NULL);
+	return (pipeline){ pipe, pipe_lyt, set_lyt, dpool, set };
 }
 
 void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
@@ -520,6 +618,8 @@ typedef struct {
 	u32 *index;
 	float *sortkey;
 	u32 *tex;
+
+	struct orbit_spec *uploading_orbit_specs;
 } orbit_tree;
 
 void rand_init()
@@ -603,13 +703,25 @@ orbit_tree orbit_tree_init(u32 cnt)
 		selfrot[i][1][3] = 0.0f;
 		index[i] = i;
 	}
+
+	struct orbit_spec *upload = xmalloc(sizeof(*upload));
+	for (u32 i = 0; i < n_orbit; i++) {
+		memcpy(upload->startoffset[i], orbit_specs[i].offset, sizeof(vec3));
+		memcpy(upload->orbitaxis[i], orbit_specs[i].axis, sizeof(vec3));
+		upload->orbitspeed[i] = orbit_specs[i].speed;
+		upload->itemscale[i] = worldpos[i][3];
+		upload->texindex[i] = (float) tex[i];
+		upload->parent[i] = orbit_specs[i].parent;
+	}
+
 	return (orbit_tree){ 2, n_orbit, tfm, selfrot,
-		worldpos, orbit_specs, index, sortkey, tex };
+		worldpos, orbit_specs, index, sortkey, tex, upload };
 }
 
 void orbit_tree_fini(orbit_tree *tree)
 {
 	free(tree->tfm);
+	free(tree->uploading_orbit_specs);
 }
 
 void flatten_once(orbit_tree *tree, float time)
@@ -840,9 +952,15 @@ void camera_update(camera *cam, context *ctx, float dt)
 	);
 }
 
-void push_constant_populate(struct push_constant_data *pushc, camera *cam)
+void push_constant_populate(struct push_constant_data *pushc, camera *cam,
+	u32 index, float time, float dt, u32 tree_height, u32 tree_n)
 {
 	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
+	pushc->baseindex = index * MAX_ITEMS_PER_FRAME;
+	pushc->time = time;
+	pushc->dt = dt;
+	pushc->tree_height = tree_height;
+	pushc->tree_n = tree_n;
 }
 
 typedef struct {
@@ -879,54 +997,81 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 	return (uploaded_mesh){ vert, indx, vbase, ibase, n_mesh };
 }
 
-void draw(context *ctx, attached_swapchain *sc, pipeline *pipe,
-	uploaded_mesh *mesh, orbit_tree *tree, camera *cam,
-	vulkan_buffer instbuf, char *mapped, float dt,
-	vulkan_buffer drawbuf, VkDrawIndexedIndirectCommand *draws)
+void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
+	pipeline *cpipe, uploaded_mesh *mesh, camera *cam,
+	vulkan_buffer instbuf, vulkan_buffer drawbuf, float dt,
+	VkCommandBuffer *render_cmd, VkSemaphore *compute_busy,
+	orbit_tree *tree)
 {
+	// cpu wait for current frame to be out of graphics pipeline
+	attached_swapchain_swap_buffers(ctx, sc);
 	// render
 	float now = (float) glfwGetTime();
-	u32 ilod[5];
-	u32 nlod = flatten(tree, now, dt, cam, ilod);
-	float render_time = (float) glfwGetTime() - now;
-	printf("    cpu render:%.2fms   l0:%6u   l1:%6u   l2:%6u   l3:%6u   l4:%6u   ",
-		render_time * 1e3f, ilod[0], ilod[1], ilod[2], ilod[3], ilod[4]);
-
-	VkDeviceSize inst_size = tree->n_orbit * sizeof(mat4);
-	VkDeviceSize inst_index = (sc->frame_indx + 1) % MAX_FRAMES_RENDERING;
-	VkDeviceSize next_index = (sc->frame_indx + 2) % MAX_FRAMES_RENDERING;
-	memcpy(mapped + next_index * inst_size, tree->tfm, ilod[nlod] * sizeof(mat4));
-	// cpu wait for current frame to be done rendering
-	attached_swapchain_swap_buffers(ctx, sc);
+	VkCommandBuffer rcmd = render_cmd[sc->frame_indx];
+	vkResetCommandBuffer(rcmd, 0);
+	VkCommandBufferBeginInfo begin_desc = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+	};
+	if (vkBeginCommandBuffer(rcmd, &begin_desc) != VK_SUCCESS)
+		crash("vkBeginCommandBuffer");
+	vkCmdBindPipeline(rcmd, VK_PIPELINE_BIND_POINT_COMPUTE, cpipe->line);
+	vkCmdBindDescriptorSets(rcmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+		cpipe->layout, 0, 1, cpipe->set, 0, NULL);
+	struct push_constant_data pushc;
+	push_constant_populate(&pushc, cam, sc->frame_indx,
+		now, dt, tree->height, tree->n_orbit);
+	VkShaderStageFlags shaders =
+		VK_SHADER_STAGE_COMPUTE_BIT |
+		VK_SHADER_STAGE_VERTEX_BIT  |
+		VK_SHADER_STAGE_FRAGMENT_BIT;
+	vkCmdPushConstants(rcmd, gpipe->layout,
+		shaders, 0, sizeof(pushc), &pushc);
+	vkCmdDispatch(rcmd, tree->n_orbit, 1, 1);
+	if (vkEndCommandBuffer(rcmd) != VK_SUCCESS)
+		crash("vkEndCommandBuffer");
+	VkSubmitInfo render_submission_desc = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &rcmd,
+		.signalSemaphoreCount = 1,
+		.pSignalSemaphores = &compute_busy[sc->frame_indx],
+	};
+	if (vkQueueSubmit(sc->graphics_queue.handle,
+		1, &render_submission_desc, VK_NULL_HANDLE) != VK_SUCCESS)
+		crash("vkQueueSubmit");
 	// recording commands for next frame
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
-	for (u32 iilod = 0; iilod < nlod; iilod++) {
-		draws[iilod].instanceCount = ilod[iilod+1] - ilod[iilod];
-	}
 	command_buffer_begin(cmd, sc);
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->line);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-		pipe->layout, 0, 1, &pipe->set[sc->frame_indx], 0, NULL);
-	struct push_constant_data pushc;
-	push_constant_populate(&pushc, cam);
-	VkDeviceSize offsets[] = { 0, inst_index * inst_size };
+		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
+	VkDeviceSize offsets[] = { 0,
+		((sc->frame_indx - 1) % MAX_FRAMES_RENDERING)
+		* tree->n_orbit * sizeof(mat4) };
 	VkBuffer buffers[] = { mesh->vert.handle, instbuf.handle };
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
-	vkCmdPushConstants(cmd, pipe->layout,
-		VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-		0, sizeof(pushc), &pushc);
-	vkCmdDrawIndexedIndirect(cmd, drawbuf.handle, sc->frame_indx * sizeof(*draws) * 4, 4, sizeof(*draws));
+	vkCmdPushConstants(cmd, gpipe->layout,
+		shaders, 0, sizeof(pushc), &pushc);
+	vkCmdDrawIndexedIndirect(cmd,
+		drawbuf.handle,
+		sc->frame_indx * 4 * sizeof(VkDrawIndexedIndirectCommand),
+		4,
+		sizeof(VkDrawIndexedIndirectCommand)
+	);
 	command_buffer_end(cmd);
-
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = attached_swapchain_current_present_ready(sc),
-		.pWaitDstStageMask = &(VkPipelineStageFlags){
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+		.waitSemaphoreCount = 2,
+		.pWaitSemaphores = (VkSemaphore[]){
+			compute_busy[sc->frame_indx],
+			*attached_swapchain_current_present_ready(sc),
+		},
+		.pWaitDstStageMask = (VkPipelineStageFlags[]){
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		},
 		.commandBufferCount = 1,
 		.pCommandBuffers = &cmd,
@@ -997,7 +1142,7 @@ int main()
 	lifetime_bind_image(&window_lifetime, textures);
 	VkSampler sampler = sampler_create(&ctx);
 	lifetime_bind_sampler(&window_lifetime, sampler);
-	pipeline pipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
+	pipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
 	u32 vertsz = uv_sphere_vert_size(64, 48) + uv_sphere_vert_size(16, 12)
 		   + uv_sphere_vert_size( 6,  3) + uv_sphere_vert_size( 3,  2);
@@ -1020,51 +1165,76 @@ int main()
 		(vec3){ 0.0f, 0.0f, 0.0f },
 		ctx.window
 	);
-	float dt = 0.0f;
-	context_ignore_mouse_once(&ctx);
-	lifetime_fini(&loading_lifetime, &ctx);
 	vulkan_buffer instbuf = buffer_create(&ctx,
 		MAX_FRAMES_RENDERING * tree.n_orbit * sizeof(mat4),
-		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+		VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	lifetime_bind_buffer(&window_lifetime, instbuf);
-	void *mapped = buffer_map(&ctx, instbuf);
-	vulkan_buffer drawbuf = buffer_create(&ctx,
-		MAX_FRAMES_RENDERING * sizeof(VkDrawIndexedIndirectCommand) * ARRAY_SIZE(m),
-		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	lifetime_bind_buffer(&window_lifetime, drawbuf);
-	VkDrawIndexedIndirectCommand (*drawmapped)[ARRAY_SIZE(m)] = buffer_map(&ctx, drawbuf);
+	VkDrawIndexedIndirectCommand (*drawmapped)[ARRAY_SIZE(m)] =
+		xmalloc(MAX_FRAMES_RENDERING * sizeof(*drawmapped));
 	for (u32 iframe = 0; iframe < MAX_FRAMES_RENDERING; iframe++) {
 		VkDrawIndexedIndirectCommand *draws = drawmapped[iframe];
 		for (u32 idraw = 0; idraw < ARRAY_SIZE(m); idraw++) {
-			draws[idraw].indexCount = lods.ibase[idraw+1] - lods.ibase[idraw];
+			draws[idraw].indexCount =
+				lods.ibase[idraw+1] - lods.ibase[idraw];
+			draws[idraw].instanceCount = (idraw == 3)? tree.n_orbit: 0;
 			draws[idraw].firstIndex = lods.ibase[idraw];
 			draws[idraw].vertexOffset = 0;
 			draws[idraw].firstInstance = 0;
 		}
 	}
+	vulkan_buffer drawbuf = data_upload(&ctx,
+		MAX_FRAMES_RENDERING * sizeof(*drawmapped), drawmapped,
+		&loading_lifetime,
+		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+	free(drawmapped);
+	lifetime_bind_buffer(&window_lifetime, drawbuf);
+	vulkan_buffer orbit_spec = data_upload(&ctx,
+		sizeof(struct orbit_spec), tree.uploading_orbit_specs,
+		&loading_lifetime, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+	lifetime_bind_buffer(&window_lifetime, orbit_spec);
+	pipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
+		ctx.device, orbit_spec, instbuf);
+	lifetime_fini(&loading_lifetime, &ctx);
+	orbit_tree_fini(&tree);
+	free(lods.vbase);
 
+	VkCommandPool render_pool = command_pool_create(ctx.device,
+		sc.graphics_queue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+	VkCommandBuffer render_cmd[MAX_FRAMES_RENDERING];
+	command_buffer_create(ctx.device, render_pool,
+		ARRAY_SIZE(render_cmd), render_cmd);
+	VkSemaphore compute_busy[MAX_FRAMES_RENDERING];
+	gpu_fence_create(ctx.device, ARRAY_SIZE(compute_busy), compute_busy);
+
+	float dt = 0.0f;
+	context_ignore_mouse_once(&ctx);
 	while (context_keep(&ctx)) {
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &pipe, &lods, &tree,
-			&cam, instbuf, mapped, dt,
-			drawbuf, drawmapped[sc.frame_indx]);
+		draw(&ctx, &sc, &gpipe, &cpipe, &lods,
+			&cam, instbuf, drawbuf, dt,
+			render_cmd, compute_busy, &tree);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
 	}
 	printf("\n");
-	orbit_tree_fini(&tree);
-	free(lods.vbase);
-
 	vkDeviceWaitIdle(ctx.device);
-	vkDestroyPipeline(ctx.device, pipe.line, NULL);
-	vkDestroyPipelineLayout(ctx.device, pipe.layout, NULL);
-	vkDestroyDescriptorPool(ctx.device, pipe.dpool, NULL);
-	vkDestroyDescriptorSetLayout(ctx.device, pipe.set_layout, NULL);
+
+	for (u32 i = 0; i < ARRAY_SIZE(compute_busy); i++) {
+		vkDestroySemaphore(ctx.device, compute_busy[i], NULL);
+	}
+	vkDestroyCommandPool(ctx.device, render_pool, NULL);
+	vkDestroyPipeline(ctx.device, cpipe.line, NULL);
+	vkDestroyPipelineLayout(ctx.device, cpipe.layout, NULL);
+	vkDestroyDescriptorPool(ctx.device, cpipe.dpool, NULL);
+	vkDestroyDescriptorSetLayout(ctx.device, cpipe.set_layout, NULL);
+	vkDestroyPipeline(ctx.device, gpipe.line, NULL);
+	vkDestroyPipelineLayout(ctx.device, gpipe.layout, NULL);
+	vkDestroyDescriptorPool(ctx.device, gpipe.dpool, NULL);
+	vkDestroyDescriptorSetLayout(ctx.device, gpipe.set_layout, NULL);
 	lifetime_fini(&window_lifetime, &ctx);
 	attached_swapchain_destroy(&ctx, &sc);
 	context_fini(&ctx);
