@@ -8,7 +8,7 @@ layout(std140, set = 0, binding = 0) readonly restrict buffer orbit_spec_data {
 	orbit_spec spec;
 };
 
-layout(std140, set = 0, binding = 1) writeonly restrict buffer orbit_tfm {
+layout(std140, set = 0, binding = 1) writeonly buffer orbit_tfm {
 	mat4 model[MAX_ITEMS];
 } result;
 

@@ -190,19 +190,29 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 		.pColorAttachments = &color_attacht_ref,
 		.pDepthStencilAttachment = &depth_attacht_ref,
 	};
-	VkSubpassDependency draw_dep = {
-		.srcSubpass = VK_SUBPASS_EXTERNAL,
-		.srcStageMask =
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-		      | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-		.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-		.dstSubpass = 0,
-		.dstStageMask =
-			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-		      | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-		.dstAccessMask =
-			VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-		      | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+	VkSubpassDependency draw_dep[] = {
+		{
+			.srcSubpass = VK_SUBPASS_EXTERNAL,
+			.srcStageMask =
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+				| VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			.dstSubpass = 0,
+			.dstStageMask =
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+				| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+			.dstAccessMask =
+				VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+				| VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+		},
+		{
+			.srcSubpass = VK_SUBPASS_EXTERNAL,
+			.srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstSubpass = 0,
+			.dstStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+			.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+		},
 	};
 	VkRenderPassCreateInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -210,8 +220,8 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 		.pAttachments = attacht,
 		.subpassCount = 1,
 		.pSubpasses = &subpass_desc,
-		.dependencyCount = 1,
-		.pDependencies = &draw_dep,
+		.dependencyCount = ARRAY_SIZE(draw_dep),
+		.pDependencies = draw_dep,
 	};
 	VkRenderPass pass;
 	if (vkCreateRenderPass(logical, &pass_desc, NULL, &pass) != VK_SUCCESS)

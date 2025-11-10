@@ -557,32 +557,17 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 	return (pipeline){ pipe, pipe_lyt, set_lyt, dpool, set };
 }
 
-void command_buffer_begin(VkCommandBuffer cbuf, attached_swapchain *swap)
+void command_buffer_begin(VkCommandBuffer cbuf)
 {
 	VkCommandBufferBeginInfo cmd_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 	};
 	if (vkBeginCommandBuffer(cbuf, &cmd_desc) != VK_SUCCESS)
 		crash("vkBeginCommandBuffer");
-	VkClearValue clear[] = {
-		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
-		[1].depthStencil = {0.0f, 0},
-	};
-	VkRenderPassBeginInfo pass_desc = {
-		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-		.renderPass = swap->pass,
-		.framebuffer = swap->framebuffer[swap->base.i_slot],
-		.renderArea.offset = {0, 0},
-		.renderArea.extent = swap->base.dim,
-		.clearValueCount = ARRAY_SIZE(clear),
-		.pClearValues = clear,
-	};
-	vkCmdBeginRenderPass(cbuf, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
 }
 
 void command_buffer_end(VkCommandBuffer cbuf)
 {
-	vkCmdEndRenderPass(cbuf);
 	if (vkEndCommandBuffer(cbuf) != VK_SUCCESS)
 		crash("vkEndCommandBuffer");
 }
@@ -1007,7 +992,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	// render
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
-	command_buffer_begin(cmd, sc);
+	command_buffer_begin(cmd);
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam, sc->frame_indx,
 		now, dt, tree->height, tree->n_orbit);
@@ -1020,10 +1005,14 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
 		cpipe->layout, 0, 1, cpipe->set, 0, NULL);
 	vkCmdDispatch(cmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
+	VkClearValue clear[] = {
+		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+		[1].depthStencil = {0.0f, 0},
+	};
 	VkBufferMemoryBarrier barrier_desc = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.buffer = instbuf.handle,
@@ -1031,13 +1020,23 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		.size = instbuf.size,
 	};
 	vkCmdPipelineBarrier(cmd,
-		VK_SHADER_STAGE_COMPUTE_BIT,
-		VK_SHADER_STAGE_VERTEX_BIT,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
 		0,
 		0, NULL,
 		1, &barrier_desc,
 		0, NULL
 	);
+	VkRenderPassBeginInfo pass_desc = {
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = sc->pass,
+		.framebuffer = sc->framebuffer[sc->base.i_slot],
+		.renderArea.offset = {0, 0},
+		.renderArea.extent = sc->base.dim,
+		.clearValueCount = ARRAY_SIZE(clear),
+		.pClearValues = clear,
+	};
+	vkCmdBeginRenderPass(cmd, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
@@ -1053,6 +1052,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		4,
 		sizeof(VkDrawIndexedIndirectCommand)
 	);
+	vkCmdEndRenderPass(cmd);
 	command_buffer_end(cmd);
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
