@@ -965,9 +965,6 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 	vbase[0] = 0;
 	ibase[0] = 0;
 	for (u32 i = 0; i < n_mesh; i++) {
-		for (u32 ii = 0; ii < m[i].nindx; ii++) {
-			m[i].indx[ii] += vbase[i];
-		}
 		vbase[i + 1] = vbase[i] + m[i].nvert;
 		ibase[i + 1] = ibase[i] + m[i].nindx;
 	}
@@ -1167,7 +1164,7 @@ int main()
 				lods.ibase[idraw+1] - lods.ibase[idraw];
 			draws[idraw].instanceCount = (idraw == 3)? tree.n_orbit: 0;
 			draws[idraw].firstIndex = lods.ibase[idraw];
-			draws[idraw].vertexOffset = 0;
+			draws[idraw].vertexOffset = (i32) lods.vbase[idraw];
 			draws[idraw].firstInstance = 0;
 		}
 	}
