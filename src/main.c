@@ -999,50 +999,45 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	pipeline *cpipe, uploaded_mesh *mesh, camera *cam,
-	vulkan_buffer instbuf, vulkan_buffer drawbuf, float dt,
-	VkCommandBuffer *render_cmd, VkSemaphore *compute_busy,
-	orbit_tree *tree)
+	vulkan_buffer instbuf, vulkan_buffer drawbuf, float dt, orbit_tree *tree)
 {
 	// cpu wait for current frame to be out of graphics pipeline
 	attached_swapchain_swap_buffers(ctx, sc);
-	// render
 	float now = (float) glfwGetTime();
-	VkCommandBuffer rcmd = render_cmd[sc->frame_indx];
-	vkResetCommandBuffer(rcmd, 0);
-	VkCommandBufferBeginInfo begin_desc = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-	};
-	if (vkBeginCommandBuffer(rcmd, &begin_desc) != VK_SUCCESS)
-		crash("vkBeginCommandBuffer");
-	vkCmdBindPipeline(rcmd, VK_PIPELINE_BIND_POINT_COMPUTE, cpipe->line);
-	vkCmdBindDescriptorSets(rcmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-		cpipe->layout, 0, 1, cpipe->set, 0, NULL);
-	struct push_constant_data pushc;
-	push_constant_populate(&pushc, cam, sc->frame_indx,
-		now, dt, tree->height, tree->n_orbit);
-	VkShaderStageFlags shaders =
-		VK_SHADER_STAGE_COMPUTE_BIT |
-		VK_SHADER_STAGE_VERTEX_BIT  |
-		VK_SHADER_STAGE_FRAGMENT_BIT;
-	vkCmdPushConstants(rcmd, gpipe->layout,
-		shaders, 0, sizeof(pushc), &pushc);
-	vkCmdDispatch(rcmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
-	if (vkEndCommandBuffer(rcmd) != VK_SUCCESS)
-		crash("vkEndCommandBuffer");
-	VkSubmitInfo render_submission_desc = {
-		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.commandBufferCount = 1,
-		.pCommandBuffers = &rcmd,
-		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &compute_busy[sc->frame_indx],
-	};
-	if (vkQueueSubmit(sc->graphics_queue.handle,
-		1, &render_submission_desc, VK_NULL_HANDLE) != VK_SUCCESS)
-		crash("vkQueueSubmit");
-	// recording commands for next frame
+	// render
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
 	command_buffer_begin(cmd, sc);
+	struct push_constant_data pushc;
+	push_constant_populate(&pushc, cam, sc->frame_indx,
+		now, dt, tree->height, tree->n_orbit);
+	vkCmdPushConstants(cmd, gpipe->layout,
+		VK_SHADER_STAGE_COMPUTE_BIT |
+		VK_SHADER_STAGE_VERTEX_BIT  |
+		VK_SHADER_STAGE_FRAGMENT_BIT,
+		0, sizeof(pushc), &pushc);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cpipe->line);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+		cpipe->layout, 0, 1, cpipe->set, 0, NULL);
+	vkCmdDispatch(cmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
+	VkBufferMemoryBarrier barrier_desc = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = instbuf.handle,
+		.offset = 0, // TODO: more granularity
+		.size = instbuf.size,
+	};
+	vkCmdPipelineBarrier(cmd,
+		VK_SHADER_STAGE_COMPUTE_BIT,
+		VK_SHADER_STAGE_VERTEX_BIT,
+		0,
+		0, NULL,
+		1, &barrier_desc,
+		0, NULL
+	);
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
@@ -1052,8 +1047,6 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	VkBuffer buffers[] = { mesh->vert.handle, instbuf.handle };
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
-	vkCmdPushConstants(cmd, gpipe->layout,
-		shaders, 0, sizeof(pushc), &pushc);
 	vkCmdDrawIndexedIndirect(cmd,
 		drawbuf.handle,
 		sc->frame_indx * 4 * sizeof(VkDrawIndexedIndirectCommand),
@@ -1064,13 +1057,9 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	// submitting commands for next frame
 	VkSubmitInfo submission_desc = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-		.waitSemaphoreCount = 2,
-		.pWaitSemaphores = (VkSemaphore[]){
-			compute_busy[sc->frame_indx],
-			*attached_swapchain_current_present_ready(sc),
-		},
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = attached_swapchain_current_present_ready(sc),
 		.pWaitDstStageMask = (VkPipelineStageFlags[]){
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 		},
 		.commandBufferCount = 1,
@@ -1199,14 +1188,6 @@ int main()
 	orbit_tree_fini(&tree);
 	free(lods.vbase);
 
-	VkCommandPool render_pool = command_pool_create(ctx.device,
-		sc.graphics_queue, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-	VkCommandBuffer render_cmd[MAX_FRAMES_RENDERING];
-	command_buffer_create(ctx.device, render_pool,
-		ARRAY_SIZE(render_cmd), render_cmd);
-	VkSemaphore compute_busy[MAX_FRAMES_RENDERING];
-	gpu_fence_create(ctx.device, ARRAY_SIZE(compute_busy), compute_busy);
-
 	float dt = 0.0f;
 	context_ignore_mouse_once(&ctx);
 	while (context_keep(&ctx)) {
@@ -1214,8 +1195,7 @@ int main()
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
 		draw(&ctx, &sc, &gpipe, &cpipe, &lods,
-			&cam, instbuf, drawbuf, dt,
-			render_cmd, compute_busy, &tree);
+			&cam, instbuf, drawbuf, dt, &tree);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
@@ -1223,10 +1203,6 @@ int main()
 	printf("\n");
 	vkDeviceWaitIdle(ctx.device);
 
-	for (u32 i = 0; i < ARRAY_SIZE(compute_busy); i++) {
-		vkDestroySemaphore(ctx.device, compute_busy[i], NULL);
-	}
-	vkDestroyCommandPool(ctx.device, render_pool, NULL);
 	vkDestroyPipeline(ctx.device, cpipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, cpipe.layout, NULL);
 	vkDestroyDescriptorPool(ctx.device, cpipe.dpool, NULL);
