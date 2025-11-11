@@ -946,7 +946,7 @@ camera camera_init(VkExtent2D range, vec3 pos, vec3 target, GLFWwindow *window)
 	camera cam;
 	cam.fov_rad = (float) M_PI / 4.0f;
 	cam.aspect = (float) range.width / (float) range.height;
-	cam.far = 100.0f;
+	cam.far = 10000.0f;
 	cam.near = 0.1f;
 	memcpy(cam.pos, pos, sizeof(vec3));
 	vec3 dir;
@@ -1081,7 +1081,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
 		cmdpipe->layout, 0, 1, cmdpipe->set, 0, NULL);
-	vkCmdDispatch(cmd, CHUNK_COUNT, 1, 1);
+	vkCmdDispatch(cmd, CHUNK_COUNT / LOCAL_SIZE, 1, 1);
 	VkBufferMemoryBarrier barrier_desc[] = {
 		{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,

@@ -3,7 +3,7 @@
 #include "shared.h"
 
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = LOCAL_SIZE, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, set = 0, binding = 2) restrict buffer lods {
 	uint partial[MAX_ITEMS];
