@@ -4,7 +4,7 @@
 
 layout(local_size_x = LOCAL_SIZE, local_size_y = 1, local_size_z = 1) in;
 
-layout(std430, set = 0, binding = 0) readonly restrict buffer orbit_spec_data {
+layout(std430, set = 0, binding = 0) restrict buffer orbit_spec_data {
 	orbit_spec spec;
 };
 
@@ -65,6 +65,27 @@ uint best_lod(uint inode, vec3 pos, float scale)
 	return MAX_LOD - 1;
 }
 
+mat3 quat2mat(vec4 q)
+{
+	return mat3(
+		vec3(2.0 * (q.w*q.w + q.x*q.x) - 1.0,
+		     2.0 * (q.x*q.y + q.w*q.z)      ,
+		     2.0 * (q.x*q.z - q.w*q.y)      ),
+		vec3(2.0 * (q.x*q.y - q.w*q.z)      ,
+		     2.0 * (q.w*q.w + q.y*q.y) - 1.0,
+		     2.0 * (q.y*q.z + q.w*q.x)      ),
+		vec3(2.0 * (q.x*q.z + q.w*q.y)      ,
+		     2.0 * (q.y*q.z - q.w*q.x)      ,
+		     2.0 * (q.w*q.w + q.z*q.z) - 1.0));
+}
+
+vec4 quat_mul(vec4 a, vec4 b)
+{
+	vec3 va = a.xyz;
+	vec3 vb = b.xyz;
+	return vec4(a.w * vb + b.w * va + cross(va, vb), a.w * b.w - dot(va, vb));
+}
+
 void main()
 {
 	if (gl_LocalInvocationID.x == 0) {
@@ -80,10 +101,15 @@ void main()
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
 	mat4 model;
-	model[0] = vec4(scale, 0.0, 0.0, 0.0);
-	model[1] = vec4(0.0, scale, 0.0, 0.0);
-	model[2] = vec4(0.0, 0.0, scale, 0.0);
-	model[3] = vec4(pos.xyz,         1.0);
+	vec4 q = spec.selforient[inode];
+	vec4 dq = vec4(info.dt * spec.selfderiv[inode].xyz, 1.0);
+	q = normalize(quat_mul(dq, q));
+	mat3 rot = quat2mat(q);
+	spec.selforient[inode] = q;
+	model[0] = vec4(scale * rot[0], 0.0);
+	model[1] = vec4(scale * rot[1], 0.0);
+	model[2] = vec4(scale * rot[2], 0.0);
+	model[3] = vec4(pos.xyz       , 1.0);
 	uint best = best_lod(inode, pos, scale);
 	uint idraw = wdraw + best;
 	model[3].w = spec.texindex[inode];

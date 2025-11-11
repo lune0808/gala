@@ -714,6 +714,8 @@ orbit_tree orbit_tree_init(u32 cnt)
 		upload->itemscale[i] = worldpos[i][3];
 		upload->texindex[i] = (float) tex[i];
 		upload->parent[i] = orbit_specs[i].parent;
+		memcpy(upload->selforient[i], selfrot[i][0], sizeof(versor));
+		memcpy(upload->selfderiv[i], selfrot[i][1], sizeof(versor));
 	}
 
 	return (orbit_tree){ 2, n_orbit, tfm, selfrot,
