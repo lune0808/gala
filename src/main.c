@@ -1023,22 +1023,34 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
 		[1].depthStencil = {0.0f, 0},
 	};
-	VkBufferMemoryBarrier barrier_desc = {
-		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.buffer = instbuf.handle,
-		.offset = 0, // TODO: more granularity
-		.size = instbuf.size,
+	VkBufferMemoryBarrier barrier_desc[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.buffer = instbuf.handle,
+			.offset = 0, // TODO: more granularity
+			.size = instbuf.size,
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.buffer = drawbuf.handle,
+			.offset = 0, // TODO: more granularity
+			.size = drawbuf.size,
+		},
 	};
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 		VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
 		0,
 		0, NULL,
-		1, &barrier_desc,
+		ARRAY_SIZE(barrier_desc), barrier_desc,
 		0, NULL
 	);
 	VkRenderPassBeginInfo pass_desc = {
