@@ -95,10 +95,10 @@ void main()
 	model[1] = vec4(scale * rot[1], 0.0);
 	model[2] = vec4(scale * rot[2], 0.0);
 	model[3] = vec4(pos.xyz       , 1.0);
+	uint best = best_lod(inode, pos, scale);
 	model[3].w = spec.texindex[inode];
 	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;
 	result.model[imodel] = model;
-	uint best = best_lod(inode, pos, scale);
 	partial[imodel] = best;
 }
 
