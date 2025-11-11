@@ -9,6 +9,7 @@ typedef u32 uint;
 
 struct push_constant_data {
 	mat4 viewproj;
+	vec4 cam_pos;
 	uint baseindex;
 	uint tree_height;
 	uint tree_n;

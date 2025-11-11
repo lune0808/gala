@@ -958,6 +958,7 @@ void push_constant_populate(struct push_constant_data *pushc, camera *cam,
 	u32 index, float time, float dt, u32 tree_height, u32 tree_n)
 {
 	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
+	memcpy(pushc->cam_pos, cam->pos, sizeof(vec3));
 	pushc->baseindex = index;
 	pushc->time = time;
 	pushc->dt = dt;
