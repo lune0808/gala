@@ -1176,7 +1176,7 @@ int main()
 	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
 		&loading_lifetime, &window_lifetime);
 	free(mesh_storage);
-	orbit_tree tree = orbit_tree_init((1u << 16) - 1);
+	orbit_tree tree = orbit_tree_init((1u << 18) - 1);
 	assert(tree.n_orbit < MAX_ITEMS);
 	vulkan_buffer orbit_spec = data_upload(&ctx,
 		sizeof(struct orbit_spec), tree.uploading_orbit_specs,
