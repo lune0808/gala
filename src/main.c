@@ -1031,8 +1031,8 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.buffer = instbuf.handle,
-			.offset = 0, // TODO: more granularity
-			.size = instbuf.size,
+			.offset = sc->frame_indx * MAX_ITEMS_PER_FRAME * sizeof(mat4),
+			.size = MAX_ITEMS_PER_FRAME * sizeof(mat4),
 		},
 		{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -1041,8 +1041,8 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.buffer = drawbuf.handle,
-			.offset = 0, // TODO: more granularity
-			.size = drawbuf.size,
+			.offset = sc->frame_indx * MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
+			.size = MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
 		},
 	};
 	vkCmdPipelineBarrier(cmd,
