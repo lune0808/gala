@@ -52,9 +52,21 @@ vec3 flatten(uint node)
 shared uint nlod[MAX_LOD];
 shared uint ilod[MAX_LOD];
 
-uint best_lod(uint inode, vec3 pos, float scale)
+uint best_lod(uint inode, mat4 tfm)
 {
-	return 3 - (inode & 1);
+	const float tolerance[MAX_LOD - 1] = { 2e-1, 3e-3, 1e-4 };
+	vec4 homogenous_lbound = tfm * vec4(-0.5, -0.5, -0.5, 1.0);
+	vec4 homogenous_ubound = tfm * vec4(+0.5, +0.5, +0.5, 1.0);
+	vec3 lbnd = homogenous_lbound.xyz / homogenous_lbound.w;
+	vec3 ubnd = homogenous_ubound.xyz / homogenous_ubound.w;
+	vec3 diff = lbnd - ubnd;
+	float extent2 = dot(diff, diff);
+	for (uint lod = 0; lod < MAX_LOD - 1; lod++) {
+		if (extent2 > tolerance[lod]) {
+			return lod;
+		}
+	}
+	return MAX_LOD - 1;
 }
 
 void main()
@@ -71,13 +83,13 @@ void main()
 		   + gl_WorkGroupID.x * MAX_LOD;
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
-	uint best = best_lod(inode, pos, scale);
-	uint idraw = wdraw + best;
 	mat4 model;
 	model[0] = vec4(scale, 0.0, 0.0, 0.0);
 	model[1] = vec4(0.0, scale, 0.0, 0.0);
 	model[2] = vec4(0.0, 0.0, scale, 0.0);
 	model[3] = vec4(pos.xyz,         1.0);
+	uint best = best_lod(inode, info.viewproj * model);
+	uint idraw = wdraw + best;
 	model[3].w = spec.texindex[inode];
 	uint local = atomicAdd(nlod[best], 1);
 	uint wmodel = info.baseindex * MAX_ITEMS_PER_FRAME
