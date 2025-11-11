@@ -1,0 +1,59 @@
+#version 450
+
+#include "shared.h"
+
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 2) restrict buffer lods {
+	uint partial[MAX_ITEMS];
+};
+
+struct VkDrawIndexedIndirectCommand {
+	uint indexCount;
+	uint instanceCount;
+	uint firstIndex;
+	int  vertexOffset;
+	uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 3) writeonly restrict buffer commands {
+	VkDrawIndexedIndirectCommand draw[];
+};
+
+layout(push_constant) uniform info_t {
+	push_constant_data info;
+};
+
+void main()
+{
+	uint frame_offset = info.baseindex * MAX_ITEMS_PER_FRAME;
+	uint imodel = frame_offset + gl_GlobalInvocationID.x * ITEM_PER_CHUNK;
+	uint nlod[MAX_LOD];
+	for (uint i = 0; i < MAX_LOD; i++) {
+		nlod[i] = 0;
+	}
+	// TODO: do a logn sum instead
+	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i++) {
+		nlod[partial[i]]++;
+	}
+	uint ilod[MAX_LOD];
+	ilod[0] = gl_GlobalInvocationID.x * ITEM_PER_CHUNK;
+	for (uint i = 1; i < MAX_LOD; i++) {
+		ilod[i] = ilod[i-1] + nlod[i-1];
+	}
+	uint draw_offset = info.baseindex * MAX_DRAW_PER_FRAME
+		         + gl_GlobalInvocationID.x * MAX_LOD;
+	for (uint i = 0; i < MAX_LOD; i++) {
+		uint idraw = draw_offset + i;
+		draw[idraw].instanceCount = nlod[i];
+		draw[idraw].firstInstance = ilod[i];
+		nlod[i] = 0;
+	}
+	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i++) {
+		uint lod = partial[i];
+		partial[i] = ilod[lod] + nlod[lod];
+		nlod[lod]++;
+	}
+}
+

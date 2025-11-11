@@ -123,7 +123,8 @@ VkDescriptorSet *descr_set_create(VkDevice logical,
 }
 
 void descr_set_config(VkDevice logical, VkDescriptorSet *set,
-	VkImageView tex_view, VkSampler tex_sm)
+	VkImageView tex_view, VkSampler tex_sm,
+	vulkan_buffer orbit_tfm, vulkan_buffer iinst)
 {
 	VkDescriptorImageInfo tex_desc = {
 		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -135,13 +136,35 @@ void descr_set_config(VkDevice logical, VkDescriptorSet *set,
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstBinding = 1,
 			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &(VkDescriptorBufferInfo){
+				orbit_tfm.handle, 0, orbit_tfm.size,
+			},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 2,
+			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &(VkDescriptorBufferInfo){
+				iinst.handle, 0, iinst.size,
+			},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 3,
+			.dstArrayElement = 0,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.descriptorCount = 1,
 			.pImageInfo = &tex_desc,
 		},
 	};
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
-		write_desc[0].dstSet = set[i];
+		for (u32 ibind = 0; ibind < ARRAY_SIZE(write_desc); ibind++) {
+			write_desc[ibind].dstSet = set[i];
+		}
 		vkUpdateDescriptorSets(logical,
 			ARRAY_SIZE(write_desc), write_desc, 0, NULL);
 	}
@@ -284,7 +307,8 @@ typedef struct {
 
 pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
-	VkImageView tex_view, VkSampler tex_sm)
+	VkImageView tex_view, VkSampler tex_sm,
+	vulkan_buffer orbit_tfm, vulkan_buffer iinst)
 {
 	VkShaderModule shader_module[2];
 	VkPipelineShaderStageCreateInfo stg_desc[2];
@@ -293,7 +317,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 	};
-	VkVertexInputAttributeDescription attributes[3 + 4];
+	VkVertexInputAttributeDescription attributes[3];
 	pipeline_vertex_input_desc(3, attributes,
 		(VkFormat[]){
 			VK_FORMAT_R32G32B32_SFLOAT,
@@ -305,35 +329,14 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 			offsetof(vertex, normal),
 			offsetof(vertex, uv),
 		});
-	attributes[3].binding = 1;
-	attributes[3].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-	attributes[3].location = 3;
-	attributes[3].offset = 0*sizeof(vec4);
-	attributes[4].binding = 1;
-	attributes[4].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-	attributes[4].location = 4;
-	attributes[4].offset = 1*sizeof(vec4);
-	attributes[5].binding = 1;
-	attributes[5].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-	attributes[5].location = 5;
-	attributes[5].offset = 2*sizeof(vec4);
-	attributes[6].binding = 1;
-	attributes[6].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-	attributes[6].location = 6;
-	attributes[6].offset = 3*sizeof(vec4);
 	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = 2,
+		.vertexBindingDescriptionCount = 1,
 		.pVertexBindingDescriptions = (VkVertexInputBindingDescription[]){
 			{
 				.binding = 0,
 				.stride = sizeof(vertex),
 				.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
-			},
-			{
-				.binding = 1,
-				.stride = sizeof(mat4),
-				.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE,
 			},
 		},
 		.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes),
@@ -399,11 +402,23 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	};
 	VkDescriptorSetLayoutBinding bind_desc[] = {
 		{
+			.binding = 2,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		},
+		{
 			.binding = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		},
+		{
+			.binding = 3,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.descriptorCount = 1,
 			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-		}
+		},
 	};
 	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(logical,
 		ARRAY_SIZE(bind_desc), bind_desc);
@@ -412,12 +427,16 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
 		},
+		{
+			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 2 * MAX_FRAMES_RENDERING,
+		},
 	};
 	VkDescriptorPool dpool = descr_pool_create(logical,
 		ARRAY_SIZE(pool_sizes), pool_sizes);
 	VkDescriptorSet *set = descr_set_create(logical,
 		dpool, set_lyt);
-	descr_set_config(logical, set, tex_view, tex_sm);
+	descr_set_config(logical, set, tex_view, tex_sm, orbit_tfm, iinst);
 	VkPipelineLayoutCreateInfo unif_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount = 1,
@@ -461,7 +480,8 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 }
 
 pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
-	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm, vulkan_buffer drawbuf)
+	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm,
+	vulkan_buffer workbuf, vulkan_buffer drawbuf)
 {
 	VkShaderModule module;
 	VkPipelineShaderStageCreateInfo stg_desc;
@@ -485,13 +505,19 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 			.descriptorCount = 1,
 			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
 		},
+		{
+			.binding = 3,
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+		},
 	};
 	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(
 		device, ARRAY_SIZE(bind_desc), bind_desc);
 	VkDescriptorPoolSize pool_size[] = {
 		{
 			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 3,
+			.descriptorCount = 4,
 		},
 	};
 	VkDescriptorPool dpool = descr_pool_create(
@@ -531,6 +557,17 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 		{
 			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			.dstBinding = 2,
+			.dstArrayElement = 0,
+			.dstSet = set[0],
+			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &(VkDescriptorBufferInfo){
+				workbuf.handle, 0, workbuf.size,
+			},
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstBinding = 3,
 			.dstArrayElement = 0,
 			.dstSet = set[0],
 			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1000,8 +1037,9 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 }
 
 void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
-	pipeline *cpipe, uploaded_mesh *mesh, camera *cam,
-	vulkan_buffer instbuf, vulkan_buffer drawbuf, float dt, orbit_tree *tree)
+	pipeline *cpipe, pipeline *cmdpipe, uploaded_mesh *mesh, camera *cam,
+	vulkan_buffer instbuf, vulkan_buffer workbuf, vulkan_buffer drawbuf,
+	float dt, orbit_tree *tree)
 {
 	// cpu wait for current frame to be out of graphics pipeline
 	attached_swapchain_swap_buffers(ctx, sc);
@@ -1022,20 +1060,48 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
 		cpipe->layout, 0, 1, cpipe->set, 0, NULL);
 	vkCmdDispatch(cmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
-	VkClearValue clear[] = {
-		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
-		[1].depthStencil = {0.0f, 0},
+	VkBufferMemoryBarrier cmd_barrier = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = workbuf.handle,
+		.offset = 0, // TODO: more granular barrier
+		.size = workbuf.size,
 	};
+	vkCmdPipelineBarrier(cmd,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+		0,
+		0, NULL,
+		1, &cmd_barrier,
+		0, NULL
+	);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe->line);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+		cmdpipe->layout, 0, 1, cmdpipe->set, 0, NULL);
+	vkCmdDispatch(cmd, CHUNK_COUNT, 1, 1);
 	VkBufferMemoryBarrier barrier_desc[] = {
 		{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.buffer = instbuf.handle,
-			.offset = sc->frame_indx * MAX_ITEMS_PER_FRAME * sizeof(mat4),
-			.size = MAX_ITEMS_PER_FRAME * sizeof(mat4),
+			.offset = 0,
+			.size = instbuf.size,
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.buffer = workbuf.handle,
+			.offset = 0, // TODO: more granularity
+			.size = workbuf.size,
 		},
 		{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -1044,18 +1110,22 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 			.buffer = drawbuf.handle,
-			.offset = sc->frame_indx * MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
-			.size = MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
+			.offset = 0,
+			.size = drawbuf.size,
 		},
 	};
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-		VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+		VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
 		0,
 		0, NULL,
 		ARRAY_SIZE(barrier_desc), barrier_desc,
 		0, NULL
 	);
+	VkClearValue clear[] = {
+		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+		[1].depthStencil = {0.0f, 0},
+	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = sc->pass,
@@ -1069,11 +1139,9 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
-	VkDeviceSize inst_indx = (sc->frame_indx - 1) % MAX_FRAMES_RENDERING;
-	VkDeviceSize offsets[] = { 0, inst_indx * MAX_ITEMS_PER_FRAME * sizeof(mat4) };
-	VkBuffer buffers[] = { mesh->vert.handle, instbuf.handle };
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
-	vkCmdBindVertexBuffers(cmd, 0, 2, buffers, offsets);
+	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vert.handle, &(VkDeviceSize){0});
+	// TODO: maybe do 4 multidraws for lod 0 then 1, 2, 3 for cache
 	vkCmdDrawIndexedIndirect(cmd,
 		drawbuf.handle,
 		sc->frame_indx * MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
@@ -1159,8 +1227,6 @@ int main()
 	lifetime_bind_image(&window_lifetime, textures);
 	VkSampler sampler = sampler_create(&ctx);
 	lifetime_bind_sampler(&window_lifetime, sampler);
-	pipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, textures.view, sampler);
 	u32 vertsz = uv_sphere_vert_size(64, 48) + uv_sphere_vert_size(16, 12)
 		   + uv_sphere_vert_size( 6,  3) + uv_sphere_vert_size( 3,  2);
 	u32 indxsz = uv_sphere_indx_size(64, 48) + uv_sphere_indx_size(16, 12)
@@ -1176,7 +1242,7 @@ int main()
 	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
 		&loading_lifetime, &window_lifetime);
 	free(mesh_storage);
-	orbit_tree tree = orbit_tree_init((1u << 19) - 1);
+	orbit_tree tree = orbit_tree_init(MAX_ITEMS_PER_FRAME - 1);
 	assert(tree.n_orbit < MAX_ITEMS);
 	vulkan_buffer orbit_spec = data_upload(&ctx,
 		sizeof(struct orbit_spec), tree.uploading_orbit_specs,
@@ -1191,7 +1257,7 @@ int main()
 		xmalloc(MAX_DRAW * sizeof(*drawmapped));
 
 	for (u32 i = 0, iframe = 0; iframe < MAX_FRAMES_RENDERING; iframe++) {
-		for (u32 ichunk = 0; ichunk < CHUNK_COUNT; ichunk++) {
+		for (u32 ichunk = 0; ichunk < MAX_DRAW_PER_FRAME / MAX_LOD; ichunk++) {
 			for (u32 ilod = 0; ilod < MAX_LOD; ilod++) {
 				drawmapped[i].indexCount =
 					lods.ibase[ilod+1] - lods.ibase[ilod];
@@ -1210,8 +1276,17 @@ int main()
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	free(drawmapped);
 	lifetime_bind_buffer(&window_lifetime, drawbuf);
+	vulkan_buffer workbuf = buffer_create(&ctx, MAX_ITEMS * sizeof(u32),
+		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	lifetime_bind_buffer(&window_lifetime, workbuf);
+	pipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
+		ctx.device, sc.base.dim, sc.pass, textures.view, sampler,
+		instbuf, workbuf);
 	pipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
-		ctx.device, orbit_spec, instbuf, drawbuf);
+		ctx.device, orbit_spec, instbuf, workbuf, drawbuf);
+	pipeline cmdpipe = compute_pipeline_create("bin/make_draws.comp.spv",
+		ctx.device, orbit_spec, instbuf, workbuf, drawbuf);
 	lifetime_fini(&loading_lifetime, &ctx);
 	orbit_tree_fini(&tree);
 	free(lods.vbase);
@@ -1227,8 +1302,8 @@ int main()
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &gpipe, &cpipe, &lods,
-			&cam, instbuf, drawbuf, dt, &tree);
+		draw(&ctx, &sc, &gpipe, &cpipe, &cmdpipe, &lods,
+			&cam, instbuf, workbuf, drawbuf, dt, &tree);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
@@ -1236,6 +1311,10 @@ int main()
 	printf("\n");
 	vkDeviceWaitIdle(ctx.device);
 
+	vkDestroyPipeline(ctx.device, cmdpipe.line, NULL);
+	vkDestroyPipelineLayout(ctx.device, cmdpipe.layout, NULL);
+	vkDestroyDescriptorPool(ctx.device, cmdpipe.dpool, NULL);
+	vkDestroyDescriptorSetLayout(ctx.device, cmdpipe.set_layout, NULL);
 	vkDestroyPipeline(ctx.device, cpipe.line, NULL);
 	vkDestroyPipelineLayout(ctx.device, cpipe.layout, NULL);
 	vkDestroyDescriptorPool(ctx.device, cpipe.dpool, NULL);

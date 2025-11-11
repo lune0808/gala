@@ -3,7 +3,7 @@
 #include "shared.h"
 
 // uniforms
-layout(binding = 1) uniform sampler2DArray tex;
+layout(binding = 3) uniform sampler2DArray tex;
 layout(push_constant) uniform draw_data {
 	push_constant_data draw;
 };

@@ -2,6 +2,7 @@
 
 #include "shared.h"
 
+
 layout(local_size_x = LOCAL_SIZE, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, set = 0, binding = 0) restrict buffer orbit_spec_data {
@@ -12,16 +13,8 @@ layout(std430, set = 0, binding = 1) writeonly restrict buffer orbit_tfm {
 	mat4 model[MAX_ITEMS];
 } result;
 
-struct VkDrawIndexedIndirectCommand {
-	uint indexCount;
-	uint instanceCount;
-	uint firstIndex;
-	int  vertexOffset;
-	uint firstInstance;
-};
-
-layout(std430, set = 0, binding = 2) writeonly restrict buffer draw_commands {
-	VkDrawIndexedIndirectCommand draw[MAX_DRAW];
+layout(std430, set = 0, binding = 2) writeonly restrict buffer lods {
+	uint partial[MAX_ITEMS];
 };
 
 layout(push_constant) uniform info_t {
@@ -48,9 +41,6 @@ vec3 flatten(uint node)
 	}
 	return pos;
 }
-
-shared uint nlod[MAX_LOD];
-shared uint ilod[MAX_LOD];
 
 uint best_lod(uint inode, vec3 pos, float scale)
 {
@@ -86,62 +76,29 @@ vec4 quat_mul(vec4 a, vec4 b)
 	return vec4(a.w * vb + b.w * va + cross(va, vb), a.w * b.w - dot(va, vb));
 }
 
+vec4 quat_integrate(vec4 q, vec3 qprime, float dt)
+{
+	vec4 dq = vec4(dt * qprime, 1.0);
+	return normalize(quat_mul(dq, q));
+}
+
 void main()
 {
-	if (gl_LocalInvocationID.x == 0) {
-		for (uint i = 0; i < MAX_LOD; i++) {
-			nlod[i] = 0;
-		}
-	}
-	memoryBarrierShared();
-
 	uint inode = gl_GlobalInvocationID.x;
-	uint wdraw = info.baseindex * MAX_DRAW_PER_FRAME
-		   + gl_WorkGroupID.x * MAX_LOD;
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
-	mat4 model;
-	vec4 q = spec.selforient[inode];
-	vec4 dq = vec4(info.dt * spec.selfderiv[inode].xyz, 1.0);
-	q = normalize(quat_mul(dq, q));
-	mat3 rot = quat2mat(q);
+	vec4 q = quat_integrate(spec.selforient[inode], spec.selfderiv[inode].xyz, info.dt);
 	spec.selforient[inode] = q;
+	mat3 rot = quat2mat(q);
+	mat4 model;
 	model[0] = vec4(scale * rot[0], 0.0);
 	model[1] = vec4(scale * rot[1], 0.0);
 	model[2] = vec4(scale * rot[2], 0.0);
 	model[3] = vec4(pos.xyz       , 1.0);
-	uint best = best_lod(inode, pos, scale);
-	uint idraw = wdraw + best;
 	model[3].w = spec.texindex[inode];
-	uint local = atomicAdd(nlod[best], 1);
-	uint wmodel = info.baseindex * MAX_ITEMS_PER_FRAME
-		    + gl_WorkGroupID.x * LOCAL_SIZE;
-
-	memoryBarrierShared();
-	if (gl_LocalInvocationID.x == 0) {
-		uint nlod0 = nlod[0];
-		uint nlod1 = nlod[1];
-		uint nlod2 = nlod[2];
-		uint nlod3 = nlod[3];
-		uint ilod0 = wmodel;
-		uint ilod1 = ilod0 + nlod0;
-		uint ilod2 = ilod1 + nlod1;
-		uint ilod3 = ilod2 + nlod2;
-		ilod[0] = ilod0;
-		ilod[1] = ilod1;
-		ilod[2] = ilod2;
-		ilod[3] = ilod3;
-	}
-	memoryBarrierShared();
-
-	uint imodel = ilod[best] + local;
+	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;
 	result.model[imodel] = model;
-
-	if (gl_LocalInvocationID.x == 0) {
-		for (uint i = 0; i < MAX_LOD; i++) {
-			draw[wdraw + i].instanceCount = nlod[i];
-			draw[wdraw + i].firstInstance = ilod[i];
-		}
-	}
+	uint best = best_lod(inode, pos, scale);
+	partial[imodel] = best;
 }
 
