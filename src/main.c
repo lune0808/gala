@@ -723,7 +723,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f,  4.0f, o->offset);
+		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.4f;
 		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 100.0f;
@@ -999,7 +999,7 @@ void push_constant_populate(struct push_constant_data *pushc, camera *cam,
 	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
 	memcpy(pushc->cam_pos, cam->pos, sizeof(vec3));
 	pushc->baseindex = index;
-	pushc->time = 0.0f * time;
+	pushc->time = time;
 	pushc->dt = dt;
 	pushc->tree_height = tree_height;
 	pushc->tree_n = tree_n;

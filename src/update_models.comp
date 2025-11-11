@@ -90,7 +90,7 @@ vec4 quat_mul(vec4 a, vec4 b)
 vec4 quat_integrate(vec4 q, vec3 omega, float dt)
 {
 	vec4 dq = vec4(dt * omega, 1.0);
-	return normalize(quat_mul(dq, q));
+	return normalize(quat_mul(q, dq));
 }
 
 void main()
@@ -98,7 +98,7 @@ void main()
 	uint inode = gl_GlobalInvocationID.x;
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
-	vec4 q = quat_integrate(spec.selforient[inode], vec3(0.0, 0.0, 3.0), info.dt);
+	vec4 q = quat_integrate(spec.selforient[inode], spec.selfderiv[inode].xyz, info.dt);
 	spec.selforient[inode] = q;
 	mat4 model;
 	mat3 rot = quat2mat3(q);
