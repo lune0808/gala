@@ -7,7 +7,8 @@ layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, set = 0, binding = 2) restrict buffer lods {
 	uint partial[MAX_ITEMS];
-};
+	uint imodel[MAX_ITEMS];
+} result;
 
 struct VkDrawIndexedIndirectCommand {
 	uint indexCount;
@@ -34,10 +35,10 @@ void main()
 		nlod[i] = 0;
 	}
 	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i++) {
-		nlod[partial[i]]++;
+		nlod[result.partial[i]]++;
 	}
 	uint ilod[MAX_LOD];
-	ilod[0] = gl_GlobalInvocationID.x * ITEM_PER_CHUNK;
+	ilod[0] = imodel;
 	for (uint i = 1; i < MAX_LOD; i++) {
 		ilod[i] = ilod[i-1] + nlod[i-1];
 	}
@@ -50,8 +51,8 @@ void main()
 		nlod[i] = 0;
 	}
 	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i++) {
-		uint lod = partial[i];
-		partial[i] = ilod[lod] + nlod[lod];
+		uint lod = result.partial[i];
+		result.imodel[ilod[lod] + nlod[lod]] = i;
 		nlod[lod]++;
 	}
 }

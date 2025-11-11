@@ -46,7 +46,12 @@ uint best_lod(uint inode, vec3 pos, float scale)
 {
 	const float tolerance[MAX_LOD - 1] = { 5e1, 5e3, 5e4 };
 	vec3 to_cam = pos - info.cam_pos.xyz;
-	float score = dot(to_cam, to_cam) / (scale * scale);
+	float dist2 = dot(to_cam, to_cam);
+	// if (dist2 < 3e1) return 0;
+	// if (dist2 < 3e2) return 1;
+	// if (dist2 < 3e3) return 2;
+	// return 3;
+	float score = dist2 / (scale * scale);
 	for (uint lod = 0; lod < MAX_LOD - 1; lod++) {
 		if (score < tolerance[lod]) {
 			return lod;
@@ -55,30 +60,36 @@ uint best_lod(uint inode, vec3 pos, float scale)
 	return MAX_LOD - 1;
 }
 
-mat3 quat2mat(vec4 q)
+mat3 quat2mat3(vec4 q)
 {
 	return mat3(
-		vec3(2.0 * (q.w*q.w + q.x*q.x) - 1.0,
-		     2.0 * (q.x*q.y + q.w*q.z)      ,
-		     2.0 * (q.x*q.z - q.w*q.y)      ),
-		vec3(2.0 * (q.x*q.y - q.w*q.z)      ,
-		     2.0 * (q.w*q.w + q.y*q.y) - 1.0,
-		     2.0 * (q.y*q.z + q.w*q.x)      ),
-		vec3(2.0 * (q.x*q.z + q.w*q.y)      ,
-		     2.0 * (q.y*q.z - q.w*q.x)      ,
-		     2.0 * (q.w*q.w + q.z*q.z) - 1.0));
+		vec3(2.0 * (q.w*q.w + q.x*q.x) - 1.0, 2.0 * (q.x*q.y + q.w*q.z)      , 2.0 * (q.x*q.z - q.w*q.y)      ),
+		vec3(2.0 * (q.x*q.y - q.w*q.z)      , 2.0 * (q.w*q.w + q.y*q.y) - 1.0, 2.0 * (q.y*q.z + q.w*q.x)      ),
+		vec3(2.0 * (q.x*q.z + q.w*q.y)      , 2.0 * (q.y*q.z - q.w*q.x)      , 2.0 * (q.w*q.w + q.z*q.z) - 1.0)
+	);
+}
+
+mat4 quat2mat4(vec4 q)
+{
+	mat3 rot = quat2mat3(q);
+	return mat4(
+		vec4(rot[0]   , 0.0),
+		vec4(rot[1]   , 0.0),
+		vec4(rot[2]   , 0.0),
+		vec4(vec3(0.0), 1.0)
+	);
 }
 
 vec4 quat_mul(vec4 a, vec4 b)
 {
 	vec3 va = a.xyz;
 	vec3 vb = b.xyz;
-	return vec4(a.w * vb + b.w * va + cross(va, vb), a.w * b.w - dot(va, vb));
+	return vec4(a.w*vb + b.w*va + cross(va, vb), a.w*b.w - dot(va, vb));
 }
 
-vec4 quat_integrate(vec4 q, vec3 qprime, float dt)
+vec4 quat_integrate(vec4 q, vec3 omega, float dt)
 {
-	vec4 dq = vec4(dt * qprime, 1.0);
+	vec4 dq = vec4(dt * omega, 1.0);
 	return normalize(quat_mul(dq, q));
 }
 
@@ -87,14 +98,14 @@ void main()
 	uint inode = gl_GlobalInvocationID.x;
 	vec3 pos = flatten(inode);
 	float scale = spec.itemscale[inode];
-	vec4 q = quat_integrate(spec.selforient[inode], spec.selfderiv[inode].xyz, info.dt);
+	vec4 q = quat_integrate(spec.selforient[inode], vec3(0.0, 0.0, 3.0), info.dt);
 	spec.selforient[inode] = q;
-	mat3 rot = quat2mat(q);
 	mat4 model;
+	mat3 rot = quat2mat3(q);
 	model[0] = vec4(scale * rot[0], 0.0);
 	model[1] = vec4(scale * rot[1], 0.0);
 	model[2] = vec4(scale * rot[2], 0.0);
-	model[3] = vec4(pos.xyz       , 1.0);
+	model[3] = vec4(pos.xyz, 1.0);
 	uint best = best_lod(inode, pos, scale);
 	model[3].w = spec.texindex[inode];
 	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;

@@ -17,7 +17,8 @@ layout(std430, set = 0, binding = 1) readonly restrict buffer orbit_tfm {
 } pull;
 
 layout(std430, set = 0, binding = 2) readonly restrict buffer instance_indices {
-	uint imodel[];
+	uint partial[MAX_ITEMS];
+	uint imodel[MAX_ITEMS];
 };
 
 // varyings
@@ -29,8 +30,7 @@ layout(location = 3) out float vert_texindex;
 void main()
 {
 	vert_uv = uv;
-	uint ipull = info.baseindex * MAX_DRAW_PER_FRAME + gl_InstanceIndex;
-	mat4 model = pull.model[imodel[ipull]];
+	mat4 model = pull.model[imodel[gl_InstanceIndex]];
 	vert_texindex = model[3].w;
 	model[0].w = 0.0;
 	model[1].w = 0.0;
@@ -40,6 +40,7 @@ void main()
 	normalmat = transpose(inverse(normalmat));
 	vert_normal = normalmat * normal;
 	vec3 pos = attr_pos;
+	pos.z += float(gl_DrawID) * 0.2;
 	vert_world_pos = (model * vec4(pos, 1.0)).xyz;
 	gl_Position = info.viewproj * model * vec4(pos, 1.0);
 }

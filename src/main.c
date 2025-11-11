@@ -723,7 +723,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
+		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f,  4.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.4f;
 		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 100.0f;
@@ -999,7 +999,7 @@ void push_constant_populate(struct push_constant_data *pushc, camera *cam,
 	memcpy(pushc->viewproj, cam->tfm, sizeof(mat4));
 	memcpy(pushc->cam_pos, cam->pos, sizeof(vec3));
 	pushc->baseindex = index;
-	pushc->time = time;
+	pushc->time = 0.0f * time;
 	pushc->dt = dt;
 	pushc->tree_height = tree_height;
 	pushc->tree_n = tree_n;
@@ -1141,13 +1141,20 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vert.handle, &(VkDeviceSize){0});
-	// TODO: maybe do 4 multidraws for lod 0 then 1, 2, 3 for cache
-	vkCmdDrawIndexedIndirect(cmd,
-		drawbuf.handle,
-		sc->frame_indx * MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand),
-		MAX_DRAW_PER_FRAME,
-		sizeof(VkDrawIndexedIndirectCommand)
-	);
+	for (u32 lod = 0; lod < MAX_LOD; lod++) {
+		pushc.lod = lod;
+		vkCmdPushConstants(cmd, gpipe->layout,
+			VK_SHADER_STAGE_COMPUTE_BIT |
+			VK_SHADER_STAGE_VERTEX_BIT  |
+			VK_SHADER_STAGE_FRAGMENT_BIT,
+			0, sizeof(pushc), &pushc);
+		vkCmdDrawIndexedIndirect(cmd,
+			drawbuf.handle,
+			(sc->frame_indx * MAX_DRAW_PER_FRAME + lod) * sizeof(VkDrawIndexedIndirectCommand),
+			MAX_DRAW_PER_FRAME / MAX_LOD,
+			MAX_LOD * sizeof(VkDrawIndexedIndirectCommand)
+		);
+	}
 	vkCmdEndRenderPass(cmd);
 	command_buffer_end(cmd);
 	// submitting commands for next frame
@@ -1276,7 +1283,7 @@ int main()
 		VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 	free(drawmapped);
 	lifetime_bind_buffer(&window_lifetime, drawbuf);
-	vulkan_buffer workbuf = buffer_create(&ctx, MAX_ITEMS * sizeof(u32),
+	vulkan_buffer workbuf = buffer_create(&ctx, 2 * MAX_ITEMS * sizeof(u32),
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	lifetime_bind_buffer(&window_lifetime, workbuf);

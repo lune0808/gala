@@ -13,16 +13,17 @@ struct push_constant_data {
 	uint baseindex;
 	uint tree_height;
 	uint tree_n;
+	uint lod;
 	float time;
 	float dt;
 };
 
 #define MAX_FRAMES_RENDERING (2)
-#define MAX_ITEMS_PER_FRAME (1 << 18)
+#define MAX_ITEMS_PER_FRAME (1 << 8)
 #define MAX_ITEMS (MAX_ITEMS_PER_FRAME * MAX_FRAMES_RENDERING)
 #define MAX_LOD (4)
 #define LOCAL_SIZE (64)
-#define CHUNK_COUNT (1 << 8)
+#define CHUNK_COUNT (1 << 4)
 #define ITEM_PER_CHUNK (MAX_ITEMS_PER_FRAME / CHUNK_COUNT)
 #define MAX_DRAW_PER_FRAME (CHUNK_COUNT * MAX_LOD)
 #define MAX_DRAW (MAX_DRAW_PER_FRAME * MAX_FRAMES_RENDERING)
