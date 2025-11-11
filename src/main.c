@@ -686,7 +686,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 40.0f, o->offset);
+		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.2f;
 		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 100.0f;
@@ -1176,7 +1176,7 @@ int main()
 	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
 		&loading_lifetime, &window_lifetime);
 	free(mesh_storage);
-	orbit_tree tree = orbit_tree_init((1u << 18) - 1);
+	orbit_tree tree = orbit_tree_init((1u << 19) - 1);
 	assert(tree.n_orbit < MAX_ITEMS);
 	vulkan_buffer orbit_spec = data_upload(&ctx,
 		sizeof(struct orbit_spec), tree.uploading_orbit_specs,
