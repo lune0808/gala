@@ -26,11 +26,15 @@ typedef struct {
 		float dx, dy;
 	} mouse;
 	VkInstance vk_instance;
-	VkSurfaceKHR window_surface;
 	VkPhysicalDevice physical_device;
 	VkDevice device;
-	VkSurfaceFormatKHR present_surface_fmt;
-	VkPresentModeKHR present_mode;
+	struct {
+		VkSurfaceKHR handle;
+		VkSurfaceFormatKHR fmt;
+		VkPresentModeKHR mode;
+		VkSurfaceCapabilitiesKHR limits;
+		VkExtent2D dim;
+	} present_surface;
 	gpu_specs specs;
 } context;
 

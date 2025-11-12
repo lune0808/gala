@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <assert.h>
 #include <string.h>
 #include <stdbool.h>
 #include "util.h"
@@ -300,30 +301,57 @@ static VkPresentModeKHR surface_present_mode(VkPhysicalDevice dev, VkSurfaceKHR 
 	return selected;
 }
 
+static VkExtent2D swapchain_select_resolution(context *ctx)
+{
+	VkSurfaceCapabilitiesKHR *pcap = &ctx->present_surface.limits;
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx->physical_device,
+		ctx->present_surface.handle, pcap);
+	if (pcap->currentExtent.width == UINT32_MAX) {
+		int width, height;
+		glfwGetFramebufferSize(ctx->window, &width, &height);
+		return (VkExtent2D){
+			CLAMP((u32) width,
+				pcap->minImageExtent.width,
+				pcap->maxImageExtent.height),
+			CLAMP((u32) height,
+				pcap->minImageExtent.height,
+				pcap->maxImageExtent.height),
+		};
+	} else {
+		return pcap->currentExtent;
+	}
+}
+
 context context_init(int width, int height, const char *title)
 {
+	// TODO: heap allocate
+	context ctx;
 	init_glfw();
-	GLFWwindow *window = glfw_window(width, height, title);
-	VkInstance vk_instance = vulkan_instance();
-	VkSurfaceKHR window_surface = vulkan_surface(vk_instance, window);
-	gpu_specs specs;
-	VkPhysicalDevice physical_device = vulkan_select_gpu(
-		vk_instance, window_surface, &specs);
-	VkDevice device = vulkan_logical_device(physical_device, specs);
-	VkSurfaceFormatKHR present_surface_fmt = surface_fmt(
-		physical_device, window_surface);
-	VkPresentModeKHR present_mode = surface_present_mode(
-		physical_device, window_surface);
-	return (context){ window, {1.0f / (float) width, 1.0f / (float) height,
-		0.0f, 0.0f, 0.0f, 0.0f}, vk_instance, window_surface,
-	       physical_device, device, present_surface_fmt, present_mode, specs };
+	ctx.window = glfw_window(width, height, title);
+	ctx.vk_instance = vulkan_instance();
+	ctx.present_surface.handle = vulkan_surface(ctx.vk_instance, ctx.window);
+	ctx.physical_device = vulkan_select_gpu(
+		ctx.vk_instance, ctx.present_surface.handle, &ctx.specs);
+	ctx.device = vulkan_logical_device(ctx.physical_device, ctx.specs);
+	ctx.present_surface.fmt = surface_fmt(
+		ctx.physical_device, ctx.present_surface.handle);
+	ctx.present_surface.mode = surface_present_mode(
+		ctx.physical_device, ctx.present_surface.handle);
+	ctx.present_surface.dim = swapchain_select_resolution(&ctx);
+	ctx.mouse.inv_width = 1.0f / (float) width;
+	ctx.mouse.inv_height = 1.0f / (float) height;
+	ctx.mouse.x = 0.0f;
+	ctx.mouse.y = 0.0f;
+	ctx.mouse.dx = 0.0f;
+	ctx.mouse.dy = 0.0f;
+	return ctx;
 }
 
 void context_fini(context *ctx)
 {
 	gpu_specs_fini(ctx->specs);
 	vkDestroyDevice(ctx->device, NULL);
-	vkDestroySurfaceKHR(ctx->vk_instance, ctx->window_surface, NULL);
+	vkDestroySurfaceKHR(ctx->vk_instance, ctx->present_surface.handle, NULL);
 	vkDestroyInstance(ctx->vk_instance, NULL);
 	glfwDestroyWindow(ctx->window);
 	glfwTerminate();

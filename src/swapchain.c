@@ -5,45 +5,26 @@
 #include "sync.h"
 #include "image.h"
 
-static VkExtent2D swapchain_select_resolution(context *ctx,
-	VkSurfaceCapabilitiesKHR *pcap)
-{
-	VkSurfaceCapabilitiesKHR cap;
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx->physical_device,
-		ctx->window_surface, &cap);
-	*pcap = cap;
-	if (cap.currentExtent.width == UINT32_MAX) {
-		int width, height;
-		glfwGetFramebufferSize(ctx->window, &width, &height);
-		return (VkExtent2D){
-			CLAMP((u32) width, cap.minImageExtent.width, cap.maxImageExtent.height),
-			CLAMP((u32) height, cap.minImageExtent.height, cap.maxImageExtent.height),
-		};
-	} else {
-		return cap.currentExtent;
-	}
-}
-
 vulkan_swapchain vulkan_swapchain_create(context *ctx)
 {
-	VkSurfaceKHR surface = ctx->window_surface;
-	VkSurfaceCapabilitiesKHR cap;
-	VkExtent2D dim = swapchain_select_resolution(ctx, &cap);
-	VkPresentModeKHR mode = ctx->present_mode;
-	VkSurfaceFormatKHR fmt = ctx->present_surface_fmt;
-	u32 expected_swap_cnt = cap.minImageCount + 1u;
+	VkSurfaceKHR surface = ctx->present_surface.handle;
+	VkSurfaceCapabilitiesKHR *cap = &ctx->present_surface.limits;
+	VkExtent2D dim = ctx->present_surface.dim;
+	VkPresentModeKHR mode = ctx->present_surface.mode;
+	VkSurfaceFormatKHR fmt = ctx->present_surface.fmt;
+	u32 expected_swap_cnt = cap->minImageCount + 1u;
 	VkSwapchainCreateInfoKHR swap_desc = {
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
-		.minImageCount = (cap.maxImageCount != 0)?
-			MIN(cap.maxImageCount, expected_swap_cnt):
+		.minImageCount = (cap->maxImageCount != 0)?
+			MIN(cap->maxImageCount, expected_swap_cnt):
 			expected_swap_cnt,
 		.imageFormat = fmt.format,
 		.imageColorSpace = fmt.colorSpace,
 		.imageExtent = dim,
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		.preTransform = cap.currentTransform,
+		.preTransform = cap->currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.presentMode = mode,
 		.clipped = VK_TRUE,
