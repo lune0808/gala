@@ -84,43 +84,10 @@ static VkFramebuffer *framebuf_attach(VkDevice logical, vulkan_swapchain *swap, 
 			swap->view[i],
 			depth_view,
 		};
-		VkFramebufferCreateInfo framebuf_desc = {
-			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.renderPass = pass,
-			.attachmentCount = ARRAY_SIZE(attacht),
-			.pAttachments = attacht,
-			.width = swap->dim.width,
-			.height = swap->dim.height,
-			.layers = 1,
-		};
-		if (vkCreateFramebuffer(logical, &framebuf_desc, NULL, &framebuf[i]) != VK_SUCCESS)
-			crash("vkCreateFramebuffer");
+		framebuf[i] = framebuffer_attach(logical, pass,
+			ARRAY_SIZE(attacht), attacht, swap->dim);
 	}
 	return framebuf;
-}
-
-static VkFormat format_supported(VkPhysicalDevice physical, size_t n_among, VkFormat *among, VkImageTiling tiling, VkFormatFeatureFlags cons)
-{
-	size_t features_offset;
-	switch (tiling) {
-	case VK_IMAGE_TILING_LINEAR:
-		features_offset = offsetof(VkFormatProperties, linearTilingFeatures);
-		break;
-	case VK_IMAGE_TILING_OPTIMAL:
-		features_offset = offsetof(VkFormatProperties, optimalTilingFeatures);
-		break;
-	default:
-		assert(0);
-	}
-	for (size_t i = 0; i < n_among; i++) {
-		VkFormatProperties props;
-		vkGetPhysicalDeviceFormatProperties(physical, among[i], &props);
-		VkFormatFeatureFlags *features = (VkFormatFeatureFlags*) ((char*) &props + features_offset);
-		if ((*features & cons) == cons) {
-			return among[i];
-		}
-	}
-	return VK_FORMAT_UNDEFINED;
 }
 
 static vulkan_bound_image depth_buffer_create(context *ctx, VkExtent2D dims)
@@ -130,8 +97,10 @@ static vulkan_bound_image depth_buffer_create(context *ctx, VkExtent2D dims)
 		VK_FORMAT_D24_UNORM_S8_UINT,
 		VK_FORMAT_D32_SFLOAT_S8_UINT,
 	};
-	VkFormat fmt = format_supported(ctx->physical_device, ARRAY_SIZE(candidates), candidates,
-		VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+	VkFormat fmt = constrain_format(ctx->physical_device,
+		ARRAY_SIZE(candidates), candidates,
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 	if (fmt == VK_FORMAT_UNDEFINED)
 		crash("no suitable format found for a depth buffer");
 	VkImageCreateInfo desc = {

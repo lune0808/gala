@@ -77,7 +77,7 @@ vulkan_bound_image vulkan_bound_image_create(context *ctx,
 	VkImageView view = vulkan_image_view_create_external(ctx, handle,
 		desc->format, desc->mipLevels, desc->arrayLayers, kind);
 	return (vulkan_bound_image){
-		handle, view, mem,
+		handle, mem, view,
 		{ desc->extent.width, desc->extent.height },
 		desc->format, desc->mipLevels, desc->arrayLayers,
 	};
@@ -278,5 +278,48 @@ vulkan_bound_image vulkan_bound_image_upload(context *ctx,
 	lifetime_release(l, icmd);
 	lifetime_bind_buffer(l, staging);
 	return vimg;
+}
+
+VkFormat constrain_format(VkPhysicalDevice physical, u32 n_option, VkFormat *option,
+	VkImageTiling tiling, VkFormatFeatureFlags constraints)
+{
+	size_t features_offset;
+	switch (tiling) {
+	case VK_IMAGE_TILING_LINEAR:
+		features_offset = offsetof(VkFormatProperties, linearTilingFeatures);
+		break;
+	case VK_IMAGE_TILING_OPTIMAL:
+		features_offset = offsetof(VkFormatProperties, optimalTilingFeatures);
+		break;
+	default:
+		assert(0);
+	}
+	for (size_t i = 0; i < n_option; i++) {
+		VkFormatProperties props;
+		vkGetPhysicalDeviceFormatProperties(physical, option[i], &props);
+		VkFormatFeatureFlags *features = (VkFormatFeatureFlags*) ((char*) &props + features_offset);
+		if ((*features & constraints) == constraints) {
+			return option[i];
+		}
+	}
+	return VK_FORMAT_UNDEFINED;
+}
+
+VkFramebuffer framebuffer_attach(VkDevice device, VkRenderPass pass,
+	u32 n_attach, VkImageView *attach, VkExtent2D dim)
+{
+	VkFramebufferCreateInfo fb_desc = {
+		.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+		.renderPass = pass,
+		.attachmentCount = n_attach,
+		.pAttachments = attach,
+		.width = dim.width,
+		.height = dim.height,
+		.layers = 1,
+	};
+	VkFramebuffer fb;
+	if (vkCreateFramebuffer(device, &fb_desc, NULL, &fb) != VK_SUCCESS)
+		crash("vkCreateFramebuffer");
+	return fb;
 }
 

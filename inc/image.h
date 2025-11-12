@@ -24,8 +24,8 @@ void vulkan_image_view_destroy(context *ctx, VkImageView view);
 
 typedef struct {
 	VkImage handle;
-	VkImageView view;
 	VkDeviceMemory mem;
+	VkImageView view;
 	VkExtent2D dim;
 	VkFormat fmt;
 	u32 mips;
@@ -43,6 +43,12 @@ void vulkan_bound_image_mips_transition(VkCommandBuffer cmd,
 	vulkan_bound_image *img);
 vulkan_bound_image vulkan_bound_image_upload(context *ctx,
 	u32 n_img, loaded_image *img, struct lifetime *l);
+
+VkFormat constrain_format(VkPhysicalDevice physical, u32 n_option, VkFormat *option,
+	VkImageTiling tiling, VkFormatFeatureFlags constraints);
+
+VkFramebuffer framebuffer_attach(VkDevice device, VkRenderPass pass,
+	u32 n_attach, VkImageView *attach, VkExtent2D dim);
 
 #endif /* GALA_IMAGE_H */
 
