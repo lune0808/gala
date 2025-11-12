@@ -42,7 +42,10 @@ void main()
 	memoryBarrierShared();
 
 	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i += stride) {
-		atomicAdd(nlod[result.partial[i]], 1);
+		uint lod = result.partial[i];
+		if (lod < MAX_LOD) {
+			atomicAdd(nlod[lod], 1);
+		}
 	}
 
 	memoryBarrierShared();
@@ -57,7 +60,6 @@ void main()
 			uint idraw = draw_offset + i;
 			draw[idraw].instanceCount = nlod[i];
 			draw[idraw].firstInstance = ilod[i];
-			// draw[idraw].indexCount = imodel;
 			nlod[i] = 0;
 		}
 	}
@@ -65,8 +67,10 @@ void main()
 
 	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i += stride) {
 		uint lod = result.partial[i];
-		uint slot = atomicAdd(nlod[lod], 1);
-		result.imodel[ilod[lod] + slot] = i;
+		if (lod < MAX_LOD) {
+			uint slot = atomicAdd(nlod[lod], 1);
+			result.imodel[ilod[lod] + slot] = i;
+		}
 	}
 }
 

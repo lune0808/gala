@@ -47,10 +47,6 @@ uint best_lod(uint inode, vec3 pos, float scale)
 	const float tolerance[MAX_LOD - 1] = { 5e2, 2e3, 1e4 };
 	vec3 to_cam = pos - info.cam_pos.xyz;
 	float dist2 = dot(to_cam, to_cam);
-	// if (dist2 < 3e1) return 0;
-	// if (dist2 < 3e2) return 1;
-	// if (dist2 < 3e3) return 2;
-	// return 3;
 	float score = dist2 / (scale * scale);
 	for (uint lod = 0; lod < MAX_LOD - 1; lod++) {
 		if (score < tolerance[lod]) {
@@ -107,6 +103,12 @@ void main()
 	model[2] = vec4(scale * rot[2], 0.0);
 	model[3] = vec4(pos.xyz, 1.0);
 	uint best = best_lod(inode, pos, scale);
+	vec4 clip = info.viewproj * vec4(pos, 1.0);
+	clip.xy /= clip.w;
+	float edge = 1.0 + scale / clip.w;
+	if (clip.x < -edge || clip.x > +edge || clip.y < -edge || clip.y > +edge) {
+		best = MAX_LOD;
+	}
 	model[3].w = spec.texindex[inode];
 	uint imodel = info.baseindex * MAX_ITEMS_PER_FRAME + inode;
 	result.model[imodel] = model;
