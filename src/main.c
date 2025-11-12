@@ -127,27 +127,6 @@ VkWriteDescriptorSet unbound_descriptor_config(u32 binding, VkDescriptorType typ
 	};
 }
 
-void descr_set_config(VkDevice logical, VkDescriptorSet *set,
-	VkImageView tex_view, VkSampler tex_sm,
-	vulkan_buffer orbit_tfm, vulkan_buffer iinst)
-{
-	VkWriteDescriptorSet write_desc[] = {
-		unbound_descriptor_config(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-		unbound_descriptor_config(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-		unbound_descriptor_config(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-	};
-	write_desc[0].pBufferInfo = &(VkDescriptorBufferInfo){ orbit_tfm.handle, 0, orbit_tfm.size };
-	write_desc[1].pBufferInfo = &(VkDescriptorBufferInfo){ iinst.handle, 0, iinst.size };
-	write_desc[2].pImageInfo  = &(VkDescriptorImageInfo){ tex_sm, tex_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
-		for (u32 ibind = 0; ibind < ARRAY_SIZE(write_desc); ibind++) {
-			write_desc[ibind].dstSet = set[i];
-		}
-		vkUpdateDescriptorSets(logical,
-			ARRAY_SIZE(write_desc), write_desc, 0, NULL);
-	}
-}
-
 typedef struct {
 	vec3 position;
 	vec3 normal;
@@ -928,6 +907,22 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 	return (uploaded_mesh){ vert, indx, vbase, ibase, n_mesh };
 }
 
+// TODO: add element size to buffer and index to this function
+VkBufferMemoryBarrier barrier_read_after_write(vulkan_buffer buf,
+	VkAccessFlags read_kind)
+{
+	return (VkBufferMemoryBarrier){
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.dstAccessMask = read_kind,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = buf.handle,
+		.offset = 0,
+		.size = buf.size,
+	};
+}
+
 void draw(context *ctx, attached_swapchain *sc,
 	pipeline_layout *graphics_layout, VkPipeline gpipe,
 	pipeline_layout *compute_layout, VkPipeline cpipe, VkPipeline cmdpipe,
@@ -966,16 +961,8 @@ void draw(context *ctx, attached_swapchain *sc,
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
 		compute_layout->handle, 0, 1, compute_layout->set, 0, NULL);
 	vkCmdDispatch(cmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
-	VkBufferMemoryBarrier cmd_barrier = {
-		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-		.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.buffer = workbuf.handle,
-		.offset = 0, // TODO: more granular barrier
-		.size = workbuf.size,
-	};
+	VkBufferMemoryBarrier cmd_barrier =
+		barrier_read_after_write(workbuf, VK_ACCESS_SHADER_READ_BIT);
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -987,36 +974,9 @@ void draw(context *ctx, attached_swapchain *sc,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe);
 	vkCmdDispatch(cmd, CHUNK_COUNT, 1, 1);
 	VkBufferMemoryBarrier barrier_desc[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.buffer = instbuf.handle,
-			.offset = 0,
-			.size = instbuf.size,
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.buffer = workbuf.handle,
-			.offset = 0, // TODO: more granularity
-			.size = workbuf.size,
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-			.buffer = drawbuf.handle,
-			.offset = 0,
-			.size = drawbuf.size,
-		},
+		barrier_read_after_write(instbuf, VK_ACCESS_SHADER_READ_BIT),
+		barrier_read_after_write(workbuf, VK_ACCESS_SHADER_READ_BIT),
+		barrier_read_after_write(drawbuf, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
 	};
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
