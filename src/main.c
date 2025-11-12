@@ -464,7 +464,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 
 pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm,
-	vulkan_buffer workbuf, vulkan_buffer drawbuf)
+	vulkan_buffer workbuf, vulkan_buffer drawbuf, vulkan_bound_image *lastlod)
 {
 	VkShaderModule module;
 	VkPipelineShaderStageCreateInfo stg_desc;
@@ -478,6 +478,8 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 			VK_SHADER_STAGE_COMPUTE_BIT),
 		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			VK_SHADER_STAGE_COMPUTE_BIT),
 	};
 	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(
 		device, ARRAY_SIZE(bind_desc), bind_desc);
@@ -485,6 +487,10 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 		{
 			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 			.descriptorCount = 4,
+		},
+		{
+			.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			.descriptorCount = MAX_FRAMES_RENDERING,
 		},
 	};
 	VkDescriptorPool dpool = descr_pool_create(
@@ -503,11 +509,13 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 		unbound_descriptor_config(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
 		unbound_descriptor_config(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
 		unbound_descriptor_config(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+		unbound_descriptor_config(4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
 	};
 	write_desc[0].dstSet = set[0];
 	write_desc[1].dstSet = set[0];
 	write_desc[2].dstSet = set[0];
 	write_desc[3].dstSet = set[0];
+	write_desc[4].dstSet = set[0];
 	write_desc[0].pBufferInfo = &(VkDescriptorBufferInfo){
 		orbit_spec.handle, 0, orbit_spec.size };
 	write_desc[1].pBufferInfo = &(VkDescriptorBufferInfo){
@@ -516,6 +524,8 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 		workbuf.handle, 0, workbuf.size };
 	write_desc[3].pBufferInfo = &(VkDescriptorBufferInfo){
 		drawbuf.handle, 0, drawbuf.size };
+	write_desc[4].pImageInfo  = &(VkDescriptorImageInfo){
+		VK_NULL_HANDLE, lastlod->view, VK_IMAGE_LAYOUT_GENERAL, };
 	vkUpdateDescriptorSets(device,
 		ARRAY_SIZE(write_desc), write_desc,
 		0, NULL
@@ -982,7 +992,7 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	pipeline *cpipe, pipeline *cmdpipe, uploaded_mesh *mesh, camera *cam,
 	vulkan_buffer instbuf, vulkan_buffer workbuf, vulkan_buffer drawbuf,
-	float dt, orbit_tree *tree)
+	float dt, orbit_tree *tree, vulkan_bound_image *lastlod)
 {
 	// cpu wait for current frame to be out of graphics pipeline
 	attached_swapchain_swap_buffers(ctx, sc);
@@ -991,6 +1001,18 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
 	command_buffer_begin(cmd);
+	VkClearValue clear[] = {
+		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+		[1].depthStencil = {0.0f, 0},
+	};
+	vkCmdClearColorImage(cmd, lastlod->handle, VK_IMAGE_LAYOUT_GENERAL,
+		&clear[0].color, 1, &(VkImageSubresourceRange){
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = 1,
+			.baseArrayLayer = sc->frame_indx,
+			.layerCount = 1,
+	});
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam, sc->frame_indx,
 		now, dt, tree->height, tree->n_orbit);
@@ -1065,10 +1087,6 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		ARRAY_SIZE(barrier_desc), barrier_desc,
 		0, NULL
 	);
-	VkClearValue clear[] = {
-		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
-		[1].depthStencil = {0.0f, 0},
-	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = sc->pass,
@@ -1084,7 +1102,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vert.handle, &(VkDeviceSize){0});
-	for (u32 lod = 0; lod < MAX_LOD; lod++) {
+	for (u32 lod = 0; lod < MAX_LOD - 1; lod++) {
 		pushc.lod = lod;
 		vkCmdPushConstants(cmd, gpipe->layout,
 			VK_SHADER_STAGE_COMPUTE_BIT |
@@ -1230,13 +1248,44 @@ int main()
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	lifetime_bind_buffer(&window_lifetime, workbuf);
+	VkImageCreateInfo lastlod_desc = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = VK_FORMAT_R8_UINT,
+		.extent = (VkExtent3D){ 320, 180, 1 },
+		.mipLevels = 1,
+		.arrayLayers = MAX_FRAMES_RENDERING,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT
+		       | VK_IMAGE_USAGE_SAMPLED_BIT
+		       | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 1,
+		.pQueueFamilyIndices = &sc.graphics_queue.family_index,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+	};
+	vulkan_bound_image lastlod = vulkan_bound_image_create(&ctx, &lastlod_desc,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+	lifetime_bind_image(&window_lifetime, lastlod);
+	u32 icmd = lifetime_acquire(&loading_lifetime, &ctx);
+	VkCommandBuffer cmd = loading_lifetime.cmd[icmd];
+	VkCommandBufferBeginInfo begin_desc = {
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	vkBeginCommandBuffer(cmd, &begin_desc);
+	vulkan_bound_image_layout_transition(cmd, &lastlod,
+		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+	vkEndCommandBuffer(cmd);
+	lifetime_release(&loading_lifetime, icmd);
 	pipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, textures.view, sampler,
 		instbuf, workbuf);
 	pipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
-		ctx.device, orbit_spec, instbuf, workbuf, drawbuf);
+		ctx.device, orbit_spec, instbuf, workbuf, drawbuf, &lastlod);
 	pipeline cmdpipe = compute_pipeline_create("bin/make_draws.comp.spv",
-		ctx.device, orbit_spec, instbuf, workbuf, drawbuf);
+		ctx.device, orbit_spec, instbuf, workbuf, drawbuf, &lastlod);
 	lifetime_fini(&loading_lifetime, &ctx);
 	orbit_tree_fini(&tree);
 	free(lods.vbase);
@@ -1253,7 +1302,8 @@ int main()
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
 		draw(&ctx, &sc, &gpipe, &cpipe, &cmdpipe, &lods,
-			&cam, instbuf, workbuf, drawbuf, dt, &tree);
+			&cam, instbuf, workbuf, drawbuf, dt,
+			&tree, &lastlod);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);

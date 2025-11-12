@@ -129,6 +129,9 @@ void vulkan_bound_image_layout_transition(VkCommandBuffer cmd, vulkan_bound_imag
 	} else if (next == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
 		acq_stg = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	} else if (next == VK_IMAGE_LAYOUT_GENERAL) {
+		acq_stg = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
 	} else {
 		crash("unimplemented image transition destination");
 	}
