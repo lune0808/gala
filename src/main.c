@@ -1235,15 +1235,15 @@ int main()
 	VkSampler sampler = sampler_create(&ctx);
 	lifetime_bind_sampler(&window_lifetime, sampler);
 	u32 vertsz = uv_sphere_vert_size(64, 48) + uv_sphere_vert_size(16, 12)
-		   + uv_sphere_vert_size( 6,  3) + uv_sphere_vert_size( 3,  2);
+		   + uv_sphere_vert_size( 8,  4) + uv_sphere_vert_size( 3,  2);
 	u32 indxsz = uv_sphere_indx_size(64, 48) + uv_sphere_indx_size(16, 12)
-		   + uv_sphere_indx_size( 6,  3) + uv_sphere_indx_size( 3,  2);
+		   + uv_sphere_indx_size( 8,  4) + uv_sphere_indx_size( 3,  2);
 	char *mesh_storage = xmalloc(vertsz + indxsz);
 	char *mesh_indx = mesh_storage + vertsz;
 	mesh m[4];
 	m[0] = uv_sphere(64, 48, 0.5f, (void*) mesh_storage, (void*) mesh_indx);
 	m[1] = uv_sphere(16, 12, 0.5f, m[0].vert + m[0].nvert, m[0].indx + m[0].nindx);
-	m[2] = uv_sphere( 6,  3, 0.5f, m[1].vert + m[1].nvert, m[1].indx + m[1].nindx);
+	m[2] = uv_sphere( 8,  4, 0.5f, m[1].vert + m[1].nvert, m[1].indx + m[1].nindx);
 	m[3] = uv_sphere( 3,  2, 0.5f, m[2].vert + m[2].nvert, m[2].indx + m[2].nindx);
 	// MUST BE CONTIGUOUS
 	uploaded_mesh lods = mesh_upload(&ctx, ARRAY_SIZE(m), m,
