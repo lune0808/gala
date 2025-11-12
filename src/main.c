@@ -225,35 +225,6 @@ VkShaderStageFlagBits shader_stage_from_name(const char *path)
 	crash("unknown shader stage for file \"%s\"", path);
 }
 
-void pipeline_stage_desc(VkDevice device, u32 cnt,
-	VkPipelineShaderStageCreateInfo *desc, VkShaderModule *module,
-	const char **path)
-{
-	for (u32 i = 0; i < cnt; i++) {
-		module[i] = build_shader_module(path[i], device);
-		desc[i] = (VkPipelineShaderStageCreateInfo){
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = shader_stage_from_name(path[i]),
-			.module = module[i],
-			.pName = "main",
-		};
-	}
-}
-
-void pipeline_vertex_input_desc(u32 cnt,
-	VkVertexInputAttributeDescription *desc,
-	VkFormat *fmt, u32 *offset)
-{
-	for (u32 i = 0; i < cnt; i++) {
-		desc[i] = (VkVertexInputAttributeDescription){
-			.binding = 0,
-			.location = i,
-			.format = fmt[i],
-			.offset = offset[i],
-		};
-	}
-}
-
 enum { MAX_DESCRIPTOR_SETS = 8 };
 
 typedef struct {
@@ -339,29 +310,44 @@ void pipeline_layout_destroy(VkDevice device, pipeline_layout *layout)
 	vkDestroyDescriptorSetLayout(device, layout->descset, NULL);
 }
 
+void pipeline_stage_desc(VkDevice device,
+	VkPipelineShaderStageCreateInfo *desc, VkShaderModule *module,
+	const char *path)
+{
+	*module = build_shader_module(path, device);
+	desc->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	desc->pNext = NULL;
+	desc->flags = 0;
+	desc->stage = shader_stage_from_name(path);
+	desc->module = *module;
+	desc->pName = "main";
+	desc->pSpecializationInfo = NULL;
+}
+
+void pipeline_vertex_input_desc(VkVertexInputAttributeDescription *desc,
+	u32 location, VkFormat fmt, u32 offset)
+{
+	desc->binding = 0;
+	desc->location = location;
+	desc->format = fmt;
+	desc->offset = offset;
+}
+
 VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
 	pipeline_layout *layout)
 {
 	VkShaderModule shader_module[2];
 	VkPipelineShaderStageCreateInfo stg_desc[2];
-	pipeline_stage_desc(logical, 2, stg_desc, shader_module,
-		(const char*[]){ vert_path, frag_path });
+	pipeline_stage_desc(logical, &stg_desc[0], &shader_module[0], vert_path);
+	pipeline_stage_desc(logical, &stg_desc[1], &shader_module[1], frag_path);
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 	};
 	VkVertexInputAttributeDescription attributes[3];
-	pipeline_vertex_input_desc(3, attributes,
-		(VkFormat[]){
-			VK_FORMAT_R32G32B32_SFLOAT,
-			VK_FORMAT_R32G32B32_SFLOAT,
-			VK_FORMAT_R32G32_SFLOAT,
-		},
-		(u32[]){
-			offsetof(vertex, position),
-			offsetof(vertex, normal),
-			offsetof(vertex, uv),
-		});
+	pipeline_vertex_input_desc(&attributes[0], 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, position));
+	pipeline_vertex_input_desc(&attributes[1], 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, normal  ));
+	pipeline_vertex_input_desc(&attributes[2], 2, VK_FORMAT_R32G32_SFLOAT   , offsetof(vertex, uv      ));
 	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		.vertexBindingDescriptionCount = 1,
@@ -464,7 +450,7 @@ VkPipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 {
 	VkShaderModule module;
 	VkPipelineShaderStageCreateInfo stg_desc;
-	pipeline_stage_desc(device, 1, &stg_desc, &module, &comp_path);
+	pipeline_stage_desc(device, &stg_desc, &module, comp_path);
 	VkComputePipelineCreateInfo pipe_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 		.stage = stg_desc,

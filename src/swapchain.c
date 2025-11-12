@@ -250,6 +250,7 @@ void attached_swapchain_destroy(context *ctx, attached_swapchain *sc)
 	for (u32 i = 0; i < sc->base.n_slot; i++) {
 		vkDestroyFramebuffer(ctx->device, sc->framebuffer[i], NULL);
 	}
+	free(sc->framebuffer);
 	vkDestroyRenderPass(ctx->device, sc->pass, NULL);
 	vulkan_bound_image_destroy(ctx, &sc->depth_buffer);
 	vulkan_swapchain_destroy(ctx, &sc->base);

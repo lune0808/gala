@@ -62,7 +62,7 @@ u32 cpu_fence_wait_any(VkDevice device,
 		for (u32 i = 0; i < n_fence; i++) {
 			if (vkGetFenceStatus(device, fence[i]) == VK_SUCCESS) {
 				vkResetFences(device, 1, &fence[i]);
-				mask |= (1ull << i);
+				mask |= (u32) (1ull << i);
 			}
 		}
 		return mask;

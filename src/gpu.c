@@ -148,6 +148,7 @@ static void vulkan_validation_layers()
 	vkEnumerateInstanceLayerProperties(&n_lyr, lyr);
 	for (VkLayerProperties *cur = lyr; cur != lyr + n_lyr; cur++) {
 		if (strcmp(validation, cur->layerName) == 0) {
+			free(lyr);
 			return;
 		}
 	}
