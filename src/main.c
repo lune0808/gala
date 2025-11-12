@@ -122,45 +122,29 @@ VkDescriptorSet *descr_set_create(VkDevice logical,
 	return set;
 }
 
+VkWriteDescriptorSet unbound_descriptor_config(u32 binding, VkDescriptorType type)
+{
+	return (VkWriteDescriptorSet){
+		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstBinding = binding,
+		.dstArrayElement = 0,
+		.descriptorType = type,
+		.descriptorCount = 1,
+	};
+}
+
 void descr_set_config(VkDevice logical, VkDescriptorSet *set,
 	VkImageView tex_view, VkSampler tex_sm,
 	vulkan_buffer orbit_tfm, vulkan_buffer iinst)
 {
-	VkDescriptorImageInfo tex_desc = {
-		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		.imageView = tex_view,
-		.sampler = tex_sm,
-	};
 	VkWriteDescriptorSet write_desc[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 1,
-			.dstArrayElement = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &(VkDescriptorBufferInfo){
-				orbit_tfm.handle, 0, orbit_tfm.size,
-			},
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 2,
-			.dstArrayElement = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &(VkDescriptorBufferInfo){
-				iinst.handle, 0, iinst.size,
-			},
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 3,
-			.dstArrayElement = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.descriptorCount = 1,
-			.pImageInfo = &tex_desc,
-		},
+		unbound_descriptor_config(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+		unbound_descriptor_config(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+		unbound_descriptor_config(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
 	};
+	write_desc[0].pBufferInfo = &(VkDescriptorBufferInfo){ orbit_tfm.handle, 0, orbit_tfm.size };
+	write_desc[1].pBufferInfo = &(VkDescriptorBufferInfo){ iinst.handle, 0, iinst.size };
+	write_desc[2].pImageInfo  = &(VkDescriptorImageInfo){ tex_sm, tex_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
 		for (u32 ibind = 0; ibind < ARRAY_SIZE(write_desc); ibind++) {
 			write_desc[ibind].dstSet = set[i];
@@ -305,6 +289,17 @@ typedef struct {
 	VkDescriptorSet *set;
 } pipeline;
 
+VkDescriptorSetLayoutBinding descset_layout_binding(u32 binding,
+	VkDescriptorType type, VkShaderStageFlags access)
+{
+	return (VkDescriptorSetLayoutBinding){
+		.binding = binding,
+		.descriptorType = type,
+		.descriptorCount = 1,
+		.stageFlags = access,
+	};
+}
+
 pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
 	VkImageView tex_view, VkSampler tex_sm,
@@ -401,24 +396,12 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 		.pAttachments = &blend_attach,
 	};
 	VkDescriptorSetLayoutBinding bind_desc[] = {
-		{
-			.binding = 2,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-		},
-		{
-			.binding = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-		},
-		{
-			.binding = 3,
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-		},
+		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			VK_SHADER_STAGE_VERTEX_BIT),
+		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			VK_SHADER_STAGE_VERTEX_BIT),
+		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			VK_SHADER_STAGE_FRAGMENT_BIT),
 	};
 	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(logical,
 		ARRAY_SIZE(bind_desc), bind_desc);
@@ -487,30 +470,14 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 	VkPipelineShaderStageCreateInfo stg_desc;
 	pipeline_stage_desc(device, 1, &stg_desc, &module, &comp_path);
 	VkDescriptorSetLayoutBinding bind_desc[] = {
-		{
-			.binding = 0,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-		},
-		{
-			.binding = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-		},
-		{
-			.binding = 2,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-		},
-		{
-			.binding = 3,
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-		},
+		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			VK_SHADER_STAGE_COMPUTE_BIT),
 	};
 	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(
 		device, ARRAY_SIZE(bind_desc), bind_desc);
@@ -532,51 +499,23 @@ pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
 	if (vkAllocateDescriptorSets(device, &set_alloc_desc, set) != VK_SUCCESS)
 		crash("vkAllocateDescriptorSets");
 	VkWriteDescriptorSet write_desc[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.dstSet = set[0],
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &(VkDescriptorBufferInfo){
-				orbit_spec.handle, 0, orbit_spec.size,
-			},
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 1,
-			.dstArrayElement = 0,
-			.dstSet = set[0],
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &(VkDescriptorBufferInfo){
-				orbit_tfm.handle, 0, orbit_tfm.size,
-			},
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 2,
-			.dstArrayElement = 0,
-			.dstSet = set[0],
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &(VkDescriptorBufferInfo){
-				workbuf.handle, 0, workbuf.size,
-			},
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstBinding = 3,
-			.dstArrayElement = 0,
-			.dstSet = set[0],
-			.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 1,
-			.pBufferInfo = &(VkDescriptorBufferInfo){
-				drawbuf.handle, 0, drawbuf.size,
-			},
-		},
+		unbound_descriptor_config(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+		unbound_descriptor_config(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+		unbound_descriptor_config(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+		unbound_descriptor_config(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
 	};
+	write_desc[0].dstSet = set[0];
+	write_desc[1].dstSet = set[0];
+	write_desc[2].dstSet = set[0];
+	write_desc[3].dstSet = set[0];
+	write_desc[0].pBufferInfo = &(VkDescriptorBufferInfo){
+		orbit_spec.handle, 0, orbit_spec.size };
+	write_desc[1].pBufferInfo = &(VkDescriptorBufferInfo){
+		orbit_tfm.handle, 0, orbit_tfm.size };
+	write_desc[2].pBufferInfo = &(VkDescriptorBufferInfo){
+		workbuf.handle, 0, workbuf.size };
+	write_desc[3].pBufferInfo = &(VkDescriptorBufferInfo){
+		drawbuf.handle, 0, drawbuf.size };
 	vkUpdateDescriptorSets(device,
 		ARRAY_SIZE(write_desc), write_desc,
 		0, NULL
