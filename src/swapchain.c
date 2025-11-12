@@ -148,7 +148,6 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 	attachment_desc(depth_fmt, 1, attach, refs,
 		VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		// FIXME: why is it stored?
 		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 	VkSubpassDescription subpass_desc = {
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
