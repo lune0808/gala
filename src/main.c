@@ -1081,7 +1081,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe->line);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
 		cmdpipe->layout, 0, 1, cmdpipe->set, 0, NULL);
-	vkCmdDispatch(cmd, CHUNK_COUNT / LOCAL_SIZE, 1, 1);
+	vkCmdDispatch(cmd, CHUNK_COUNT, 1, 1);
 	VkBufferMemoryBarrier barrier_desc[] = {
 		{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,

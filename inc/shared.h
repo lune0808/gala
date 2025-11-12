@@ -19,11 +19,11 @@ struct push_constant_data {
 };
 
 #define MAX_FRAMES_RENDERING (2)
-#define MAX_ITEMS_PER_FRAME (1 << 18)
+#define MAX_ITEMS_PER_FRAME (1 << 19)
 #define MAX_ITEMS (MAX_ITEMS_PER_FRAME * MAX_FRAMES_RENDERING)
 #define MAX_LOD (4)
-#define LOCAL_SIZE (1 << 8)
-#define CHUNK_COUNT (1 << 14)
+#define LOCAL_SIZE (1 << 6)
+#define CHUNK_COUNT (1 << 8)
 #define ITEM_PER_CHUNK (MAX_ITEMS_PER_FRAME / CHUNK_COUNT)
 #define MAX_DRAW_PER_FRAME (CHUNK_COUNT * MAX_LOD)
 #define MAX_DRAW (MAX_DRAW_PER_FRAME * MAX_FRAMES_RENDERING)

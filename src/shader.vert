@@ -1,4 +1,4 @@
-#version 460
+#version 450
 
 #include "shared.h"
 
@@ -40,7 +40,6 @@ void main()
 	normalmat = transpose(inverse(normalmat));
 	vert_normal = normalmat * normal;
 	vec3 pos = attr_pos;
-	// pos.z += float(gl_DrawID) * 0.2;
 	vert_world_pos = (model * vec4(pos, 1.0)).xyz;
 	gl_Position = info.viewproj * model * vec4(pos, 1.0);
 }

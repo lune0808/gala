@@ -26,34 +26,47 @@ layout(push_constant) uniform info_t {
 	push_constant_data info;
 };
 
+shared uint nlod[MAX_LOD];
+shared uint ilod[MAX_LOD];
+
 void main()
 {
 	uint frame_offset = info.baseindex * MAX_ITEMS_PER_FRAME;
-	uint imodel = frame_offset + gl_GlobalInvocationID.x * ITEM_PER_CHUNK;
-	uint nlod[MAX_LOD];
-	for (uint i = 0; i < MAX_LOD; i++) {
-		nlod[i] = 0;
+	uint imodel = frame_offset + gl_WorkGroupID.x * ITEM_PER_CHUNK + gl_LocalInvocationID.x;
+	uint stride = LOCAL_SIZE;
+	if (gl_LocalInvocationID.x == 0) {
+		for (uint i = 0; i < MAX_LOD; i++) {
+			nlod[i] = 0;
+		}
 	}
-	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i++) {
-		nlod[result.partial[i]]++;
+	memoryBarrierShared();
+
+	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i += stride) {
+		atomicAdd(nlod[result.partial[i]], 1);
 	}
-	uint ilod[MAX_LOD];
-	ilod[0] = imodel;
-	for (uint i = 1; i < MAX_LOD; i++) {
-		ilod[i] = ilod[i-1] + nlod[i-1];
+
+	memoryBarrierShared();
+	if (gl_LocalInvocationID.x == 0) {
+		ilod[0] = imodel;
+		for (uint i = 1; i < MAX_LOD; i++) {
+			ilod[i] = ilod[i-1] + nlod[i-1];
+		}
+		uint draw_offset = info.baseindex * MAX_DRAW_PER_FRAME
+			+ gl_WorkGroupID.x * MAX_LOD;
+		for (uint i = 0; i < MAX_LOD; i++) {
+			uint idraw = draw_offset + i;
+			draw[idraw].instanceCount = nlod[i];
+			draw[idraw].firstInstance = ilod[i];
+			// draw[idraw].indexCount = imodel;
+			nlod[i] = 0;
+		}
 	}
-	uint draw_offset = info.baseindex * MAX_DRAW_PER_FRAME
-		         + gl_GlobalInvocationID.x * MAX_LOD;
-	for (uint i = 0; i < MAX_LOD; i++) {
-		uint idraw = draw_offset + i;
-		draw[idraw].instanceCount = nlod[i];
-		draw[idraw].firstInstance = ilod[i];
-		nlod[i] = 0;
-	}
-	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i++) {
+	memoryBarrierShared();
+
+	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i += stride) {
 		uint lod = result.partial[i];
-		result.imodel[ilod[lod] + nlod[lod]] = i;
-		nlod[lod]++;
+		uint slot = atomicAdd(nlod[lod], 1);
+		result.imodel[ilod[lod] + slot] = i;
 	}
 }
 
