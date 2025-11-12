@@ -103,23 +103,17 @@ VkDescriptorPool descr_pool_create(VkDevice logical,
 	return pool;
 }
 
-VkDescriptorSet *descr_set_create(VkDevice logical,
-	VkDescriptorPool pool, VkDescriptorSetLayout lyt)
+void descr_set_create(VkDevice logical, u32 n_set, VkDescriptorSet *set,
+	VkDescriptorPool pool, VkDescriptorSetLayout *lyt)
 {
-	VkDescriptorSetLayout lyt_dupes[MAX_FRAMES_RENDERING];
-	for (u32 i = 0; i < MAX_FRAMES_RENDERING; i++) {
-		lyt_dupes[i] = lyt;
-	}
-	VkDescriptorSet *set = malloc(MAX_FRAMES_RENDERING * sizeof *set);
 	VkDescriptorSetAllocateInfo alloc_desc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		.descriptorPool = pool,
-		.descriptorSetCount = ARRAY_SIZE(lyt_dupes),
-		.pSetLayouts = lyt_dupes,
+		.descriptorSetCount = n_set,
+		.pSetLayouts = lyt,
 	};
 	if (vkAllocateDescriptorSets(logical, &alloc_desc, set) != VK_SUCCESS)
 		crash("vkAllocateDescriptorSets");
-	return set;
 }
 
 VkWriteDescriptorSet unbound_descriptor_config(u32 binding, VkDescriptorType type)
@@ -281,13 +275,14 @@ void pipeline_vertex_input_desc(u32 cnt,
 	}
 }
 
+enum { MAX_DESCRIPTOR_SETS = 8 };
+
 typedef struct {
-	VkPipeline line;
-	VkPipelineLayout layout;
-	VkDescriptorSetLayout set_layout;
-	VkDescriptorPool dpool;
-	VkDescriptorSet *set;
-} pipeline;
+	VkPipelineLayout handle;
+	VkDescriptorSetLayout descset;
+	VkDescriptorPool pool;
+	VkDescriptorSet set[MAX_DESCRIPTOR_SETS];
+} pipeline_layout;
 
 VkDescriptorSetLayoutBinding descset_layout_binding(u32 binding,
 	VkDescriptorType type, VkShaderStageFlags access)
@@ -300,10 +295,74 @@ VkDescriptorSetLayoutBinding descset_layout_binding(u32 binding,
 	};
 }
 
-pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
+// description points to an array of union { VkDescriptorBufferInfo; VkDescriptorImageInfo }*
+pipeline_layout pipeline_layout_create(VkDevice device, u32 n_set,
+	u32 n_bind, VkDescriptorSetLayoutBinding *bind, void **description,
+	u32 n_poolz, VkDescriptorPoolSize *poolz,
+	VkPushConstantRange *pushconstant)
+{
+	VkDescriptorSetLayout set_layout[MAX_DESCRIPTOR_SETS];
+	set_layout[0] = descriptor_set_lyt_create(device, n_bind, bind);
+	for (u32 i = 1; i < n_set; i++) {
+		set_layout[i] = set_layout[0];
+	}
+	VkDescriptorPool pool = descr_pool_create(device,
+		n_poolz, poolz);
+	VkDescriptorSet set[MAX_DESCRIPTOR_SETS];
+	descr_set_create(device, n_set, set, pool, set_layout);
+	VkWriteDescriptorSet write[n_bind];
+	for (u32 iset = 0; iset < n_set; iset++) {
+		for (u32 ibind = 0; ibind < n_bind; ibind++) {
+			VkDescriptorType type = bind[ibind].descriptorType;
+			write[ibind] = unbound_descriptor_config(bind[ibind].binding,
+				type);
+			write[ibind].dstSet = set[iset];
+			switch (type) {
+			case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+				write[ibind].pBufferInfo = description[ibind];
+				break;
+			case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+			case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+				write[ibind].pImageInfo = description[ibind];
+				break;
+			default:
+				crash("unhandled descriptor type %x", type);
+			}
+		}
+		vkUpdateDescriptorSets(
+			device,
+			n_bind, write,
+			0, NULL
+		);
+	}
+	VkPipelineLayoutCreateInfo layout_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &set_layout[0],
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = pushconstant,
+	};
+	VkPipelineLayout layout;
+	if (vkCreatePipelineLayout(device, &layout_desc, NULL, &layout) != VK_SUCCESS)
+		crash("vkCreatePipelineLayout");
+	pipeline_layout result;
+	result.handle = layout;
+	result.descset = set_layout[0];
+	result.pool = pool;
+	memcpy(result.set, set, n_set * sizeof(*set));
+	return result;
+}
+
+void pipeline_layout_destroy(VkDevice device, pipeline_layout *layout)
+{
+	vkDestroyPipelineLayout(device, layout->handle, NULL);
+	vkDestroyDescriptorPool(device, layout->pool, NULL);
+	vkDestroyDescriptorSetLayout(device, layout->descset, NULL);
+}
+
+VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
-	VkImageView tex_view, VkSampler tex_sm,
-	vulkan_buffer orbit_tfm, vulkan_buffer iinst)
+	pipeline_layout *layout)
 {
 	VkShaderModule shader_module[2];
 	VkPipelineShaderStageCreateInfo stg_desc[2];
@@ -395,47 +454,6 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 		.attachmentCount = 1,
 		.pAttachments = &blend_attach,
 	};
-	VkDescriptorSetLayoutBinding bind_desc[] = {
-		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			VK_SHADER_STAGE_VERTEX_BIT),
-		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			VK_SHADER_STAGE_VERTEX_BIT),
-		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			VK_SHADER_STAGE_FRAGMENT_BIT),
-	};
-	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(logical,
-		ARRAY_SIZE(bind_desc), bind_desc);
-	VkDescriptorPoolSize pool_sizes[] = {
-		{
-			.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.descriptorCount = (u32) MAX_FRAMES_RENDERING,
-		},
-		{
-			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 2 * MAX_FRAMES_RENDERING,
-		},
-	};
-	VkDescriptorPool dpool = descr_pool_create(logical,
-		ARRAY_SIZE(pool_sizes), pool_sizes);
-	VkDescriptorSet *set = descr_set_create(logical,
-		dpool, set_lyt);
-	descr_set_config(logical, set, tex_view, tex_sm, orbit_tfm, iinst);
-	VkPipelineLayoutCreateInfo unif_lyt_desc = {
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = 1,
-		.pSetLayouts = &set_lyt,
-		.pushConstantRangeCount = 1,
-		.pPushConstantRanges = &(VkPushConstantRange){
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
-				    | VK_SHADER_STAGE_FRAGMENT_BIT
-				    | VK_SHADER_STAGE_COMPUTE_BIT,
-			.offset = 0,
-			.size = sizeof(struct push_constant_data),
-		},
-	};
-	VkPipelineLayout unif_lyt;
-	if (vkCreatePipelineLayout(logical, &unif_lyt_desc, NULL, &unif_lyt) != VK_SUCCESS)
-		crash("vkCreatePipelineLayout");
 
 	VkGraphicsPipelineCreateInfo gpipe_desc = {
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -449,7 +467,7 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 		.pDepthStencilState = &ds_desc,
 		.pColorBlendState = &blend_global,
 		.pDynamicState = &dyn_desc,
-		.layout = unif_lyt,
+		.layout = layout->handle,
 		.renderPass = gpass,
 		.subpass = 0,
 	};
@@ -459,105 +477,26 @@ pipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 
 	vkDestroyShaderModule(logical, shader_module[0], NULL);
 	vkDestroyShaderModule(logical, shader_module[1], NULL);
-	return (pipeline){ gpipe, unif_lyt, set_lyt, dpool, set };
+	return gpipe;
 }
 
-pipeline compute_pipeline_create(const char *comp_path, VkDevice device,
-	vulkan_buffer orbit_spec, vulkan_buffer orbit_tfm,
-	vulkan_buffer workbuf, vulkan_buffer drawbuf, vulkan_bound_image *lastlod)
+VkPipeline compute_pipeline_create(const char *comp_path, VkDevice device,
+	pipeline_layout *layout)
 {
 	VkShaderModule module;
 	VkPipelineShaderStageCreateInfo stg_desc;
 	pipeline_stage_desc(device, 1, &stg_desc, &module, &comp_path);
-	VkDescriptorSetLayoutBinding bind_desc[] = {
-		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			VK_SHADER_STAGE_COMPUTE_BIT),
-		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			VK_SHADER_STAGE_COMPUTE_BIT),
-		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			VK_SHADER_STAGE_COMPUTE_BIT),
-		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			VK_SHADER_STAGE_COMPUTE_BIT),
-		descset_layout_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-			VK_SHADER_STAGE_COMPUTE_BIT),
-	};
-	VkDescriptorSetLayout set_lyt = descriptor_set_lyt_create(
-		device, ARRAY_SIZE(bind_desc), bind_desc);
-	VkDescriptorPoolSize pool_size[] = {
-		{
-			.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = 4,
-		},
-		{
-			.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-			.descriptorCount = MAX_FRAMES_RENDERING,
-		},
-	};
-	VkDescriptorPool dpool = descr_pool_create(
-		device, ARRAY_SIZE(pool_size), pool_size);
-	VkDescriptorSet *set = xmalloc(sizeof(*set));
-	VkDescriptorSetAllocateInfo set_alloc_desc = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-		.descriptorPool = dpool,
-		.descriptorSetCount = 1,
-		.pSetLayouts = &set_lyt,
-	};
-	if (vkAllocateDescriptorSets(device, &set_alloc_desc, set) != VK_SUCCESS)
-		crash("vkAllocateDescriptorSets");
-	VkWriteDescriptorSet write_desc[] = {
-		unbound_descriptor_config(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-		unbound_descriptor_config(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-		unbound_descriptor_config(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-		unbound_descriptor_config(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
-		unbound_descriptor_config(4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-	};
-	write_desc[0].dstSet = set[0];
-	write_desc[1].dstSet = set[0];
-	write_desc[2].dstSet = set[0];
-	write_desc[3].dstSet = set[0];
-	write_desc[4].dstSet = set[0];
-	write_desc[0].pBufferInfo = &(VkDescriptorBufferInfo){
-		orbit_spec.handle, 0, orbit_spec.size };
-	write_desc[1].pBufferInfo = &(VkDescriptorBufferInfo){
-		orbit_tfm.handle, 0, orbit_tfm.size };
-	write_desc[2].pBufferInfo = &(VkDescriptorBufferInfo){
-		workbuf.handle, 0, workbuf.size };
-	write_desc[3].pBufferInfo = &(VkDescriptorBufferInfo){
-		drawbuf.handle, 0, drawbuf.size };
-	write_desc[4].pImageInfo  = &(VkDescriptorImageInfo){
-		VK_NULL_HANDLE, lastlod->view, VK_IMAGE_LAYOUT_GENERAL, };
-	vkUpdateDescriptorSets(device,
-		ARRAY_SIZE(write_desc), write_desc,
-		0, NULL
-	);
-	VkPipelineLayoutCreateInfo pipe_lyt_desc = {
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = 1,
-		.pSetLayouts = &set_lyt,
-		.pushConstantRangeCount = 1,
-		.pPushConstantRanges = &(VkPushConstantRange){
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT
-				    | VK_SHADER_STAGE_VERTEX_BIT
-				    | VK_SHADER_STAGE_FRAGMENT_BIT,
-			.offset = 0,
-			.size = sizeof(struct push_constant_data),
-		},
-	};
-	VkPipelineLayout pipe_lyt;
-	if (vkCreatePipelineLayout(device, &pipe_lyt_desc,
-		NULL, &pipe_lyt) != VK_SUCCESS)
-		crash("vkCreatePipelineLayout");
 	VkComputePipelineCreateInfo pipe_desc = {
 		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
 		.stage = stg_desc,
-		.layout = pipe_lyt,
+		.layout = layout->handle,
 	};
 	VkPipeline pipe;
 	if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipe_desc, NULL,
 		&pipe) != VK_SUCCESS)
 		crash("vkCreateComputePipelines");
 	vkDestroyShaderModule(device, module, NULL);
-	return (pipeline){ pipe, pipe_lyt, set_lyt, dpool, set };
+	return pipe;
 }
 
 void command_buffer_begin(VkCommandBuffer cbuf)
@@ -989,8 +928,10 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 	return (uploaded_mesh){ vert, indx, vbase, ibase, n_mesh };
 }
 
-void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
-	pipeline *cpipe, pipeline *cmdpipe, uploaded_mesh *mesh, camera *cam,
+void draw(context *ctx, attached_swapchain *sc,
+	pipeline_layout *graphics_layout, VkPipeline gpipe,
+	pipeline_layout *compute_layout, VkPipeline cpipe, VkPipeline cmdpipe,
+	uploaded_mesh *mesh, camera *cam,
 	vulkan_buffer instbuf, vulkan_buffer workbuf, vulkan_buffer drawbuf,
 	float dt, orbit_tree *tree, vulkan_bound_image *lastlod)
 {
@@ -1016,14 +957,14 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam, sc->frame_indx,
 		now, dt, tree->height, tree->n_orbit);
-	vkCmdPushConstants(cmd, gpipe->layout,
+	vkCmdPushConstants(cmd, compute_layout->handle,
 		VK_SHADER_STAGE_COMPUTE_BIT |
 		VK_SHADER_STAGE_VERTEX_BIT  |
 		VK_SHADER_STAGE_FRAGMENT_BIT,
 		0, sizeof(pushc), &pushc);
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cpipe->line);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cpipe);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-		cpipe->layout, 0, 1, cpipe->set, 0, NULL);
+		compute_layout->handle, 0, 1, compute_layout->set, 0, NULL);
 	vkCmdDispatch(cmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
 	VkBufferMemoryBarrier cmd_barrier = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -1043,9 +984,7 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		1, &cmd_barrier,
 		0, NULL
 	);
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe->line);
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-		cmdpipe->layout, 0, 1, cmdpipe->set, 0, NULL);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe);
 	vkCmdDispatch(cmd, CHUNK_COUNT, 1, 1);
 	VkBufferMemoryBarrier barrier_desc[] = {
 		{
@@ -1097,14 +1036,16 @@ void draw(context *ctx, attached_swapchain *sc, pipeline *gpipe,
 		.pClearValues = clear,
 	};
 	vkCmdBeginRenderPass(cmd, &pass_desc, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe->line);
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpipe);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-		gpipe->layout, 0, 1, &gpipe->set[sc->frame_indx], 0, NULL);
+		graphics_layout->handle, 0,
+		1, &graphics_layout->set[sc->frame_indx],
+		0, NULL);
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vert.handle, &(VkDeviceSize){0});
 	for (u32 lod = 0; lod < MAX_LOD - 1; lod++) {
 		pushc.lod = lod;
-		vkCmdPushConstants(cmd, gpipe->layout,
+		vkCmdPushConstants(cmd, graphics_layout->handle,
 			VK_SHADER_STAGE_COMPUTE_BIT |
 			VK_SHADER_STAGE_VERTEX_BIT  |
 			VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1279,13 +1220,59 @@ int main()
 		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 	vkEndCommandBuffer(cmd);
 	lifetime_release(&loading_lifetime, icmd);
-	pipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, textures.view, sampler,
-		instbuf, workbuf);
-	pipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
-		ctx.device, orbit_spec, instbuf, workbuf, drawbuf, &lastlod);
-	pipeline cmdpipe = compute_pipeline_create("bin/make_draws.comp.spv",
-		ctx.device, orbit_spec, instbuf, workbuf, drawbuf, &lastlod);
+	VkDescriptorSetLayoutBinding graphics_bind[] = {
+		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT),
+		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT),
+		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT),
+	};
+	VkDescriptorPoolSize graphics_poolz[] = {
+		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_RENDERING },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * MAX_FRAMES_RENDERING },
+	};
+	VkPushConstantRange pushc_desc = {
+		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+			    | VK_SHADER_STAGE_FRAGMENT_BIT
+			    | VK_SHADER_STAGE_COMPUTE_BIT,
+		.offset = 0,
+		.size = sizeof(struct push_constant_data),
+	};
+	void *graphics_binddesc[] = {
+		&(VkDescriptorBufferInfo){ instbuf.handle, 0, instbuf.size },
+		&(VkDescriptorBufferInfo){ workbuf.handle, 0, workbuf.size },
+		&(VkDescriptorImageInfo ){ sampler, textures.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+	};
+	pipeline_layout graphics_layout = pipeline_layout_create(ctx.device, MAX_FRAMES_RENDERING,
+		ARRAY_SIZE(graphics_bind), graphics_bind, graphics_binddesc,
+		ARRAY_SIZE(graphics_poolz), graphics_poolz,
+		&pushc_desc);
+	VkPipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
+		ctx.device, sc.base.dim, sc.pass, &graphics_layout);
+	VkDescriptorSetLayoutBinding compute_bind[] = {
+		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
+		descset_layout_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE , VK_SHADER_STAGE_COMPUTE_BIT),
+	};
+	VkDescriptorPoolSize compute_poolz[] = {
+		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 },
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE , MAX_FRAMES_RENDERING },
+	};
+	void *compute_binddesc[] = {
+		&(VkDescriptorBufferInfo){ orbit_spec.handle, 0, orbit_spec.size },
+		&(VkDescriptorBufferInfo){ instbuf   .handle, 0, instbuf   .size },
+		&(VkDescriptorBufferInfo){ workbuf   .handle, 0, workbuf   .size },
+		&(VkDescriptorBufferInfo){ drawbuf   .handle, 0, drawbuf   .size },
+		&(VkDescriptorImageInfo ){ VK_NULL_HANDLE, lastlod.view, VK_IMAGE_LAYOUT_GENERAL },
+	};
+	pipeline_layout compute_layout = pipeline_layout_create(ctx.device, 1,
+		ARRAY_SIZE(compute_bind), compute_bind, compute_binddesc,
+		ARRAY_SIZE(compute_poolz), compute_poolz,
+		&pushc_desc);
+	VkPipeline cpipe = compute_pipeline_create("bin/update_models.comp.spv",
+		ctx.device, &compute_layout);
+	VkPipeline cmdpipe = compute_pipeline_create("bin/make_draws.comp.spv",
+		ctx.device, &compute_layout);
 	lifetime_fini(&loading_lifetime, &ctx);
 	orbit_tree_fini(&tree);
 	free(lods.vbase);
@@ -1301,9 +1288,12 @@ int main()
 		double beg_time = glfwGetTime();
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
-		draw(&ctx, &sc, &gpipe, &cpipe, &cmdpipe, &lods,
-			&cam, instbuf, workbuf, drawbuf, dt,
-			&tree, &lastlod);
+		draw(&ctx, &sc,
+			&graphics_layout, gpipe,
+			&compute_layout, cpipe, cmdpipe,
+			&lods, &cam,
+			instbuf, workbuf, drawbuf,
+			dt, &tree, &lastlod);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);
@@ -1311,18 +1301,11 @@ int main()
 	printf("\n");
 	vkDeviceWaitIdle(ctx.device);
 
-	vkDestroyPipeline(ctx.device, cmdpipe.line, NULL);
-	vkDestroyPipelineLayout(ctx.device, cmdpipe.layout, NULL);
-	vkDestroyDescriptorPool(ctx.device, cmdpipe.dpool, NULL);
-	vkDestroyDescriptorSetLayout(ctx.device, cmdpipe.set_layout, NULL);
-	vkDestroyPipeline(ctx.device, cpipe.line, NULL);
-	vkDestroyPipelineLayout(ctx.device, cpipe.layout, NULL);
-	vkDestroyDescriptorPool(ctx.device, cpipe.dpool, NULL);
-	vkDestroyDescriptorSetLayout(ctx.device, cpipe.set_layout, NULL);
-	vkDestroyPipeline(ctx.device, gpipe.line, NULL);
-	vkDestroyPipelineLayout(ctx.device, gpipe.layout, NULL);
-	vkDestroyDescriptorPool(ctx.device, gpipe.dpool, NULL);
-	vkDestroyDescriptorSetLayout(ctx.device, gpipe.set_layout, NULL);
+	vkDestroyPipeline(ctx.device, cmdpipe, NULL);
+	vkDestroyPipeline(ctx.device, cpipe, NULL);
+	pipeline_layout_destroy(ctx.device, &compute_layout);
+	vkDestroyPipeline(ctx.device, gpipe, NULL);
+	pipeline_layout_destroy(ctx.device, &graphics_layout);
 	lifetime_fini(&window_lifetime, &ctx);
 	attached_swapchain_destroy(&ctx, &sc);
 	context_fini(&ctx);
