@@ -151,44 +151,41 @@ static vulkan_bound_image depth_buffer_create(context *ctx, VkExtent2D dims)
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
+void attachment_desc(VkFormat fmt, u32 index,
+	VkAttachmentDescription *attach, VkAttachmentReference *ref,
+	VkAttachmentLoadOp on_load, VkAttachmentStoreOp on_store,
+	VkImageLayout render, VkImageLayout release)
+{
+	attach[index].flags = 0;
+	attach[index].format = fmt;
+	attach[index].samples = VK_SAMPLE_COUNT_1_BIT;
+	attach[index].loadOp = on_load;
+	attach[index].storeOp = on_store;
+	attach[index].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	attach[index].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attach[index].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	attach[index].finalLayout = release;
+	ref[index].attachment = index;
+	ref[index].layout = render;
+}
+
 static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
 {
-	VkAttachmentDescription attacht[] = {
-		{
-			.format = fmt,
-			.samples = VK_SAMPLE_COUNT_1_BIT,
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-		},
-		{
-			.format = depth_fmt,
-			.samples = VK_SAMPLE_COUNT_1_BIT,
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-		},
-	};
-	VkAttachmentReference color_attacht_ref = {
-		.attachment = 0,
-		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-	};
-	VkAttachmentReference depth_attacht_ref = {
-		.attachment = 1,
-		.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-	};
+	VkAttachmentDescription attach[2];
+	VkAttachmentReference refs[2];
+	attachment_desc(fmt, 0, attach, refs,
+		VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE,
+		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	attachment_desc(depth_fmt, 1, attach, refs,
+		VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		// FIXME: why is it stored?
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 	VkSubpassDescription subpass_desc = {
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = 1,
-		.pColorAttachments = &color_attacht_ref,
-		.pDepthStencilAttachment = &depth_attacht_ref,
+		.pColorAttachments = &refs[0],
+		.pDepthStencilAttachment = &refs[1],
 	};
 	VkSubpassDependency draw_dep[] = {
 		{
@@ -216,8 +213,8 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	};
 	VkRenderPassCreateInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = ARRAY_SIZE(attacht),
-		.pAttachments = attacht,
+		.attachmentCount = ARRAY_SIZE(attach),
+		.pAttachments = attach,
 		.subpassCount = 1,
 		.pSubpasses = &subpass_desc,
 		.dependencyCount = ARRAY_SIZE(draw_dep),
