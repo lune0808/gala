@@ -30,10 +30,10 @@ struct push_constant_data {
 
 struct orbit_spec {
 	vec4 startoffset[MAX_ITEMS_PER_FRAME];
-	vec4 orbitaxis[MAX_ITEMS_PER_FRAME];
+	vec4 orbitorient[MAX_ITEMS_PER_FRAME];
+	vec4 orbitderiv[MAX_ITEMS_PER_FRAME];
 	vec4 selforient[MAX_ITEMS_PER_FRAME];
 	vec4 selfderiv[MAX_ITEMS_PER_FRAME];
-	float orbitspeed[MAX_ITEMS_PER_FRAME];
 	float itemscale[MAX_ITEMS_PER_FRAME];
 	float texindex[MAX_ITEMS_PER_FRAME];
 	uint parent[MAX_ITEMS_PER_FRAME];

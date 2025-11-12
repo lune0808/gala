@@ -726,7 +726,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.4f;
 		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
-		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 100.0f;
+		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 30.0f;
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
 		o->parent = 1;
@@ -746,8 +746,12 @@ orbit_tree orbit_tree_init(u32 cnt)
 	struct orbit_spec *upload = xmalloc(sizeof(*upload));
 	for (u32 i = 0; i < n_orbit; i++) {
 		memcpy(upload->startoffset[i], orbit_specs[i].offset, sizeof(vec3));
-		memcpy(upload->orbitaxis[i], orbit_specs[i].axis, sizeof(vec3));
-		upload->orbitspeed[i] = orbit_specs[i].speed;
+		versor orient;
+		vec3 omega;
+		glm_quat_identity(orient);
+		glm_vec3_scale(orbit_specs[i].axis, 0.5f * orbit_specs[i].speed, omega);
+		memcpy(upload->orbitorient[i], orient, sizeof(versor));
+		memcpy(upload->orbitderiv[i], omega, sizeof(vec3));
 		upload->itemscale[i] = worldpos[i][3];
 		upload->texindex[i] = (float) tex[i];
 		upload->parent[i] = orbit_specs[i].parent;
