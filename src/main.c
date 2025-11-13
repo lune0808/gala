@@ -334,7 +334,7 @@ void pipeline_vertex_input_desc(VkVertexInputAttributeDescription *desc,
 }
 
 VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
-	VkDevice logical, VkExtent2D dims, VkRenderPass gpass,
+	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, u32 subpass,
 	pipeline_layout *layout)
 {
 	VkShaderModule shader_module[2];
@@ -434,7 +434,7 @@ VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path
 		.pDynamicState = &dyn_desc,
 		.layout = layout->handle,
 		.renderPass = gpass,
-		.subpass = 0,
+		.subpass = subpass,
 	};
 	VkPipeline gpipe;
 	if (vkCreateGraphicsPipelines(logical, VK_NULL_HANDLE, 1, &gpipe_desc, NULL, &gpipe) != VK_SUCCESS)
@@ -1192,7 +1192,7 @@ int main()
 		ARRAY_SIZE(graphics_poolz), graphics_poolz,
 		&pushc_desc);
 	VkPipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, &graphics_layout);
+		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout);
 	VkDescriptorSetLayoutBinding compute_bind[] = {
 		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
 		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),

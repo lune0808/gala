@@ -101,40 +101,44 @@ static vulkan_bound_image depth_buffer_create(context *ctx, VkExtent2D dims)
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
-void attachment_desc(VkFormat fmt, u32 index,
-	VkAttachmentDescription *attach, VkAttachmentReference *ref,
+void attachment_desc(VkFormat fmt, VkAttachmentDescription *attach,
 	VkAttachmentLoadOp on_load, VkAttachmentStoreOp on_store,
-	VkImageLayout render, VkImageLayout release)
+	VkImageLayout release)
 {
-	attach[index].flags = 0;
-	attach[index].format = fmt;
-	attach[index].samples = VK_SAMPLE_COUNT_1_BIT;
-	attach[index].loadOp = on_load;
-	attach[index].storeOp = on_store;
-	attach[index].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	attach[index].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	attach[index].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	attach[index].finalLayout = release;
-	ref[index].attachment = index;
-	ref[index].layout = render;
+	attach->flags = 0;
+	attach->format = fmt;
+	attach->samples = VK_SAMPLE_COUNT_1_BIT;
+	attach->loadOp = on_load;
+	attach->storeOp = on_store;
+	attach->stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	attach->stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	attach->initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	attach->finalLayout = release;
 }
 
 static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 	VkFormat depth_fmt)
 {
-	VkAttachmentDescription attach[2];
-	VkAttachmentReference refs[2];
-	attachment_desc(fmt, 0, attach, refs,
+	enum { PLANET_COLR, PLANET_DPTH, N_ATTACH };
+	enum { PLANET_SUBP, N_SUBPASS };
+	VkAttachmentDescription attach[N_ATTACH];
+	attachment_desc(fmt, &attach[PLANET_COLR],
 		VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE,
-		VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-	attachment_desc(depth_fmt, 1, attach, refs,
+		VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	attachment_desc(depth_fmt, &attach[PLANET_DPTH],
 		VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE,
-		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-	VkSubpassDescription subpass_desc = {
-		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
-		.colorAttachmentCount = 1,
-		.pColorAttachments = &refs[0],
-		.pDepthStencilAttachment = &refs[1],
+		VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+	VkAttachmentReference planet_ref[] = {
+		{ PLANET_COLR, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+		{ PLANET_DPTH, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL },
+	};
+	VkSubpassDescription subpass_desc[] = {
+		{
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.colorAttachmentCount = 1,
+			.pColorAttachments = &planet_ref[0],
+			.pDepthStencilAttachment = &planet_ref[1],
+		},
 	};
 	VkSubpassDependency draw_dep[] = {
 		{
@@ -143,7 +147,7 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 				| VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
 			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-			.dstSubpass = 0,
+			.dstSubpass = PLANET_SUBP,
 			.dstStageMask =
 				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 				| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
@@ -155,7 +159,7 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 			.srcSubpass = VK_SUBPASS_EXTERNAL,
 			.srcStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 			.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-			.dstSubpass = 0,
+			.dstSubpass = PLANET_SUBP,
 			.dstStageMask = VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
 			.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
 		},
@@ -164,8 +168,8 @@ static VkRenderPass render_pass_create(VkDevice logical, VkFormat fmt,
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 		.attachmentCount = ARRAY_SIZE(attach),
 		.pAttachments = attach,
-		.subpassCount = 1,
-		.pSubpasses = &subpass_desc,
+		.subpassCount = ARRAY_SIZE(subpass_desc),
+		.pSubpasses = subpass_desc,
 		.dependencyCount = ARRAY_SIZE(draw_dep),
 		.pDependencies = draw_dep,
 	};
