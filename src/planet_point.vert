@@ -35,6 +35,6 @@ void main()
 	vert_world_pos = pos.xyz;
 	vert_normal = info.cam_pos.xyz - pos.xyz;
 	gl_Position = info.viewproj * pos;
-	gl_PointSize = 1.0;
+	gl_PointSize = 2.0;
 }
 

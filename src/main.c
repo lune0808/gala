@@ -574,9 +574,9 @@ orbit_tree orbit_tree_init(u32 cnt)
 	const float PI = (float) M_PI;
 	for (u32 i = 2; i < cnt; i++) {
 		orbiting *o = &orbit_specs[i];
-		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
+		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 96.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.4f;
-		rand_vec3_dir(0.0f, r / 3000.0f * PI, o->axis);
+		rand_vec3_dir(0.0f, r / 2000.0f * PI, o->axis);
 		o->speed = rand_float(0.5f, 0.65f) / powf(r, 1.2f) * 10.0f;
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
