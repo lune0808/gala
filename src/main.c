@@ -128,9 +128,8 @@ VkWriteDescriptorSet unbound_descriptor_config(u32 binding, VkDescriptorType typ
 }
 
 typedef struct {
-	vec3 position;
-	vec3 normal;
-	vec2 uv;
+	vec4 position_u;
+	vec4 normal_v;
 } vertex;
 
 typedef struct {
@@ -166,28 +165,28 @@ mesh uv_sphere(u32 nx, u32 ny, float r, vertex *vert, u32 *indx)
 		float iy_ny = (float) (iy + 1) / (float) (ny + 1);
 		for (u32 ix = 0; ix <= nx; ix++) {
 			float anglex = 2.0f * (float) M_PI * (float) ix / (float) nx;
-			vcur->position[0] = rsiny * cosf(anglex);
-			vcur->position[1] = rsiny * sinf(anglex);
-			vcur->position[2] = rcosy;
-			vcur->uv[0] = (float) ix / (float) nx;
-			vcur->uv[1] = iy_ny;
+			vcur->position_u[0] = rsiny * cosf(anglex);
+			vcur->position_u[1] = rsiny * sinf(anglex);
+			vcur->position_u[2] = rcosy;
+			vcur->position_u[3] = (float) ix / (float) nx;
+			vcur->normal_v[3] = iy_ny;
 			vcur++;
 		}
 	}
 	for (u32 ipole = 0; ipole < nx; ipole++) {
-		vert[nvert_quads + ipole].position[0] = 0.0f;
-		vert[nvert_quads + ipole].position[1] = 0.0f;
-		vert[nvert_quads + ipole].position[2] = r;
-		vert[nvert_quads + ipole].uv[0] = ((float) ipole + 0.5f) / (float) nx;
-		vert[nvert_quads + ipole].uv[1] = 0.0f;
-		vert[nvert_quads + ipole + nx].position[0] = 0.0f;
-		vert[nvert_quads + ipole + nx].position[1] = 0.0f;
-		vert[nvert_quads + ipole + nx].position[2] = -r;
-		vert[nvert_quads + ipole + nx].uv[0] = ((float) ipole + 0.5f) / (float) nx;
-		vert[nvert_quads + ipole + nx].uv[1] = 1.0f;
+		vert[nvert_quads + ipole].position_u[0] = 0.0f;
+		vert[nvert_quads + ipole].position_u[1] = 0.0f;
+		vert[nvert_quads + ipole].position_u[2] = r;
+		vert[nvert_quads + ipole].position_u[3] = ((float) ipole + 0.5f) / (float) nx;
+		vert[nvert_quads + ipole].normal_v[3] = 0.0f;
+		vert[nvert_quads + ipole + nx].position_u[0] = 0.0f;
+		vert[nvert_quads + ipole + nx].position_u[1] = 0.0f;
+		vert[nvert_quads + ipole + nx].position_u[2] = -r;
+		vert[nvert_quads + ipole + nx].position_u[3] = ((float) ipole + 0.5f) / (float) nx;
+		vert[nvert_quads + ipole + nx].normal_v[3] = 1.0f;
 	}
 	for (vcur = vert; vcur != vert + nvert; vcur++) {
-		glm_normalize_to(vcur->position, vcur->normal);
+		glm_normalize_to(vcur->position_u, vcur->normal_v);
 	}
 	u32 *icur = indx;
 	u32 ivert = 0;
@@ -344,10 +343,9 @@ VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 	};
-	VkVertexInputAttributeDescription attributes[3];
-	pipeline_vertex_input_desc(&attributes[0], 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, position));
-	pipeline_vertex_input_desc(&attributes[1], 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(vertex, normal  ));
-	pipeline_vertex_input_desc(&attributes[2], 2, VK_FORMAT_R32G32_SFLOAT   , offsetof(vertex, uv      ));
+	VkVertexInputAttributeDescription attributes[2];
+	pipeline_vertex_input_desc(&attributes[0], 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vertex, position_u));
+	pipeline_vertex_input_desc(&attributes[1], 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vertex, normal_v));
 	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
 		.vertexBindingDescriptionCount = 1,
