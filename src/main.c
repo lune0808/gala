@@ -334,7 +334,8 @@ void pipeline_vertex_input_desc(VkVertexInputAttributeDescription *desc,
 
 VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, u32 subpass,
-	pipeline_layout *layout, VkPrimitiveTopology topology)
+	pipeline_layout *layout, VkPrimitiveTopology topology,
+	VkPipelineVertexInputStateCreateInfo *vert_lyt_desc)
 {
 	VkShaderModule shader_module[2];
 	VkPipelineShaderStageCreateInfo stg_desc[2];
@@ -342,22 +343,6 @@ VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path
 	pipeline_stage_desc(logical, &stg_desc[1], &shader_module[1], frag_path);
 	VkPipelineDynamicStateCreateInfo dyn_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-	};
-	VkVertexInputAttributeDescription attributes[2];
-	pipeline_vertex_input_desc(&attributes[0], 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vertex, position_u));
-	pipeline_vertex_input_desc(&attributes[1], 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vertex, normal_v));
-	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = 1,
-		.pVertexBindingDescriptions = (VkVertexInputBindingDescription[]){
-			{
-				.binding = 0,
-				.stride = sizeof(vertex),
-				.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
-			},
-		},
-		.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes),
-		.pVertexAttributeDescriptions = attributes,
 	};
 	VkPipelineInputAssemblyStateCreateInfo ia_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -422,7 +407,7 @@ VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
 		.stageCount = ARRAY_SIZE(stg_desc),
 		.pStages = stg_desc,
-		.pVertexInputState = &vert_lyt_desc,
+		.pVertexInputState = vert_lyt_desc,
 		.pInputAssemblyState = &ia_desc,
 		.pViewportState = &vp_desc,
 		.pRasterizationState = &ras_desc,
@@ -1162,10 +1147,32 @@ int main()
 		ARRAY_SIZE(graphics_bind), graphics_bind, graphics_binddesc,
 		ARRAY_SIZE(graphics_poolz), graphics_poolz,
 		&pushc_desc);
+	VkVertexInputAttributeDescription attributes[2];
+	pipeline_vertex_input_desc(&attributes[0], 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vertex, position_u));
+	pipeline_vertex_input_desc(&attributes[1], 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(vertex, normal_v));
+	VkPipelineVertexInputStateCreateInfo vert_lyt_desc = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		.vertexBindingDescriptionCount = 1,
+		.pVertexBindingDescriptions = (VkVertexInputBindingDescription[]){
+			{
+				.binding = 0,
+				.stride = sizeof(vertex),
+				.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+			},
+		},
+		.vertexAttributeDescriptionCount = ARRAY_SIZE(attributes),
+		.pVertexAttributeDescriptions = attributes,
+	};
 	VkPipeline gpipe = graphics_pipeline_create("bin/planet.vert.spv", "bin/planet.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		&vert_lyt_desc);
+	vert_lyt_desc.vertexBindingDescriptionCount = 0;
+	vert_lyt_desc.pVertexBindingDescriptions = NULL;
+	vert_lyt_desc.vertexAttributeDescriptionCount = 0;
+	vert_lyt_desc.pVertexAttributeDescriptions = NULL;
 	VkPipeline point_pipe = graphics_pipeline_create("bin/planet_point.vert.spv", "bin/planet.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
+		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_POINT_LIST,
+		&vert_lyt_desc);
 	VkDescriptorSetLayoutBinding compute_bind[] = {
 		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
 		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
