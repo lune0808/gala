@@ -43,7 +43,7 @@ void main()
 
 	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i += stride) {
 		uint lod = result.partial[i];
-		if (lod < MAX_LOD - 1) {
+		if (lod < MAX_LOD) {
 			atomicAdd(nlod[lod], 1);
 		}
 	}
@@ -67,7 +67,7 @@ void main()
 
 	for (uint i = imodel; i < imodel + ITEM_PER_CHUNK; i += stride) {
 		uint lod = result.partial[i];
-		if (lod < MAX_LOD - 1) {
+		if (lod < MAX_LOD) {
 			uint slot = atomicAdd(nlod[lod], 1);
 			result.imodel[ilod[lod] + slot] = i;
 		}

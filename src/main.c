@@ -914,7 +914,7 @@ void draw(context *ctx, attached_swapchain *sc,
 	pipeline_layout *compute_layout, VkPipeline cpipe, VkPipeline cmdpipe,
 	uploaded_mesh *mesh, camera *cam,
 	vulkan_buffer instbuf, vulkan_buffer workbuf, vulkan_buffer drawbuf,
-	float dt, orbit_tree *tree, vulkan_bound_image *lastlod)
+	float dt, orbit_tree *tree)
 {
 	// cpu wait for current frame to be out of graphics pipeline
 	attached_swapchain_swap_buffers(ctx, sc);
@@ -923,18 +923,6 @@ void draw(context *ctx, attached_swapchain *sc,
 	VkCommandBuffer cmd = attached_swapchain_current_graphics_cmd(sc);
 	vkResetCommandBuffer(cmd, 0);
 	command_buffer_begin(cmd);
-	VkClearValue clear[] = {
-		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
-		[1].depthStencil = {0.0f, 0},
-	};
-	vkCmdClearColorImage(cmd, lastlod->handle, VK_IMAGE_LAYOUT_GENERAL,
-		&clear[0].color, 1, &(VkImageSubresourceRange){
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.baseMipLevel = 0,
-			.levelCount = 1,
-			.baseArrayLayer = sc->frame_indx,
-			.layerCount = 1,
-	});
 	struct push_constant_data pushc;
 	push_constant_populate(&pushc, cam, sc->frame_indx,
 		now, dt, tree->height, tree->n_orbit);
@@ -972,6 +960,10 @@ void draw(context *ctx, attached_swapchain *sc,
 		ARRAY_SIZE(barrier_desc), barrier_desc,
 		0, NULL
 	);
+	VkClearValue clear[] = {
+		[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}},
+		[1].depthStencil = {0.0f, 0},
+	};
 	VkRenderPassBeginInfo pass_desc = {
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = sc->pass,
@@ -989,7 +981,7 @@ void draw(context *ctx, attached_swapchain *sc,
 		0, NULL);
 	vkCmdBindIndexBuffer(cmd, mesh->indx.handle, 0, VK_INDEX_TYPE_UINT32);
 	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vert.handle, &(VkDeviceSize){0});
-	for (u32 lod = 0; lod < MAX_LOD - 1; lod++) {
+	for (u32 lod = 0; lod < MAX_LOD; lod++) {
 		pushc.lod = lod;
 		vkCmdPushConstants(cmd, graphics_layout->handle,
 			VK_SHADER_STAGE_COMPUTE_BIT |
@@ -1135,37 +1127,6 @@ int main()
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	lifetime_bind_buffer(&window_lifetime, workbuf);
-	VkImageCreateInfo lastlod_desc = {
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.imageType = VK_IMAGE_TYPE_2D,
-		.format = VK_FORMAT_R8_UINT,
-		.extent = (VkExtent3D){ 320, 180, 1 },
-		.mipLevels = 1,
-		.arrayLayers = MAX_FRAMES_RENDERING,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT
-		       | VK_IMAGE_USAGE_SAMPLED_BIT
-		       | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.queueFamilyIndexCount = 1,
-		.pQueueFamilyIndices = &sc.graphics_queue.family_index,
-		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-	};
-	vulkan_bound_image lastlod = vulkan_bound_image_create(&ctx, &lastlod_desc,
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-	lifetime_bind_image(&window_lifetime, lastlod);
-	u32 icmd = lifetime_acquire(&loading_lifetime, &ctx);
-	VkCommandBuffer cmd = loading_lifetime.cmd[icmd];
-	VkCommandBufferBeginInfo begin_desc = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-	};
-	vkBeginCommandBuffer(cmd, &begin_desc);
-	vulkan_bound_image_layout_transition(cmd, &lastlod,
-		VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-	vkEndCommandBuffer(cmd);
-	lifetime_release(&loading_lifetime, icmd);
 	VkDescriptorSetLayoutBinding graphics_bind[] = {
 		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT),
 		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT),
@@ -1198,7 +1159,6 @@ int main()
 		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
 		descset_layout_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
 		descset_layout_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
-		descset_layout_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE , VK_SHADER_STAGE_COMPUTE_BIT),
 	};
 	VkDescriptorPoolSize compute_poolz[] = {
 		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 },
@@ -1209,7 +1169,6 @@ int main()
 		&(VkDescriptorBufferInfo){ instbuf   .handle, 0, instbuf   .size },
 		&(VkDescriptorBufferInfo){ workbuf   .handle, 0, workbuf   .size },
 		&(VkDescriptorBufferInfo){ drawbuf   .handle, 0, drawbuf   .size },
-		&(VkDescriptorImageInfo ){ VK_NULL_HANDLE, lastlod.view, VK_IMAGE_LAYOUT_GENERAL },
 	};
 	pipeline_layout compute_layout = pipeline_layout_create(ctx.device, 1,
 		ARRAY_SIZE(compute_bind), compute_bind, compute_binddesc,
@@ -1239,7 +1198,7 @@ int main()
 			&compute_layout, cpipe, cmdpipe,
 			&lods, &cam,
 			instbuf, workbuf, drawbuf,
-			dt, &tree, &lastlod);
+			dt, &tree);
 		double end_time = glfwGetTime();
 		printf("\rframe time: %.2fms", (end_time - beg_time) * 1e3);
 		dt = (float) (end_time - beg_time);

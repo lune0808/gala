@@ -17,8 +17,6 @@ layout(std430, set = 0, binding = 2) writeonly restrict buffer lods {
 	uint partial[MAX_ITEMS];
 };
 
-layout(r8ui, set = 0, binding = 4) uniform restrict uimage2DArray lastlod;
-
 layout(push_constant) uniform info_t {
 	push_constant_data info;
 };
@@ -116,14 +114,5 @@ void main()
 	partial[imodel] = best;
 	spec.orbitorient[inode]
 		= quat_integrate(spec.orbitorient[inode], spec.orbitderiv[inode].xyz, info.dt);
-	if (best == MAX_LOD - 1) {
-		ivec3 idim = imageSize(lastlod);
-		vec3 dim = idim;
-		ivec3 coord = ivec3((clip.xy * 0.5 + 0.5) * dim.xy, info.baseindex);
-		if (0 <= coord.x && coord.x < dim.x
-		 && 0 <= coord.y && coord.y < dim.y) {
-			imageStore(lastlod, coord, uvec4(0xff));
-		}
-	}
 }
 
