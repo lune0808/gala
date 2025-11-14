@@ -578,8 +578,8 @@ orbit_tree orbit_tree_init(u32 cnt)
 		orbiting *o = &orbit_specs[i];
 		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.4f;
-		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
-		o->speed = rand_float(0.5f, 0.65f) / powf(r, 1.2f) * 30.0f;
+		rand_vec3_dir(0.0f, r / 3000.0f * PI, o->axis);
+		o->speed = rand_float(0.5f, 0.65f) / powf(r, 1.2f) * 10.0f;
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
 		o->parent = 1;
@@ -824,6 +824,8 @@ void camera_update(camera *cam, context *ctx, float dt)
 	mat3 axes;
 	camera_axes(cam, axes);
 	GLFWwindow *window = ctx->window;
+	if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)
+		speed = 10.0f;
 	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
 		glm_vec3_muladds(axes[0], -dt * speed, cam->pos);
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
