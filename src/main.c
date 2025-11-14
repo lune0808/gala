@@ -880,7 +880,7 @@ uploaded_mesh mesh_upload(context *ctx, u32 n_mesh, mesh *m,
 
 // TODO: add element size to buffer and index to this function
 VkBufferMemoryBarrier barrier_read_after_write(vulkan_buffer buf,
-	VkAccessFlags read_kind)
+	VkAccessFlags read_kind, VkDeviceSize index, VkDeviceSize elemsize)
 {
 	return (VkBufferMemoryBarrier){
 		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -889,8 +889,8 @@ VkBufferMemoryBarrier barrier_read_after_write(vulkan_buffer buf,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.buffer = buf.handle,
-		.offset = 0,
-		.size = buf.size,
+		.offset = index * elemsize,
+		.size = elemsize,
 	};
 }
 
@@ -921,7 +921,9 @@ void draw(context *ctx, attached_swapchain *sc,
 		compute_layout->handle, 0, 1, compute_layout->set, 0, NULL);
 	vkCmdDispatch(cmd, tree->n_orbit / LOCAL_SIZE, 1, 1);
 	VkBufferMemoryBarrier cmd_barrier =
-		barrier_read_after_write(workbuf, VK_ACCESS_SHADER_READ_BIT);
+		barrier_read_after_write(workbuf, VK_ACCESS_SHADER_READ_BIT,
+			// only need barrier with the 'partial' array
+			sc->frame_indx * 2, MAX_ITEMS_PER_FRAME * sizeof(u32));
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -933,9 +935,13 @@ void draw(context *ctx, attached_swapchain *sc,
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, cmdpipe);
 	vkCmdDispatch(cmd, CHUNK_COUNT, 1, 1);
 	VkBufferMemoryBarrier barrier_desc[] = {
-		barrier_read_after_write(instbuf, VK_ACCESS_SHADER_READ_BIT),
-		barrier_read_after_write(workbuf, VK_ACCESS_SHADER_READ_BIT),
-		barrier_read_after_write(drawbuf, VK_ACCESS_INDIRECT_COMMAND_READ_BIT),
+		barrier_read_after_write(instbuf, VK_ACCESS_SHADER_READ_BIT,
+			sc->frame_indx, MAX_ITEMS_PER_FRAME * sizeof(mat4)),
+		barrier_read_after_write(workbuf, VK_ACCESS_SHADER_READ_BIT,
+			// only need barrier with the 'imodel' array
+			sc->frame_indx * 2 + 1, MAX_ITEMS_PER_FRAME * sizeof(u32)),
+		barrier_read_after_write(drawbuf, VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+			sc->frame_indx, MAX_DRAW_PER_FRAME * sizeof(VkDrawIndexedIndirectCommand)),
 	};
 	vkCmdPipelineBarrier(cmd,
 		VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
