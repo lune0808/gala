@@ -42,6 +42,5 @@ void main()
 	vec3 pos = attr_pos;
 	vert_world_pos = (model * vec4(pos, 1.0)).xyz;
 	gl_Position = info.viewproj * model * vec4(pos, 1.0);
-	gl_PointSize = 1.0;
 }
 

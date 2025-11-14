@@ -579,7 +579,7 @@ orbit_tree orbit_tree_init(u32 cnt)
 		float r = rand_vec3_shell(0.485f * PI, 0.515f * PI, 2.0f, 64.0f, o->offset);
 		worldpos[i][3] = rand_float(1.0f/64.0f, 1.0f/8.0f) * 1.4f;
 		rand_vec3_dir(0.0f, r / 1200.0f * PI, o->axis);
-		o->speed = rand_float(0.5f, 0.65f) / (r * r) * 30.0f;
+		o->speed = rand_float(0.5f, 0.65f) / powf(r, 1.2f) * 30.0f;
 		rand_vec3_dir(0.0f, 0.25f * PI, o->self_axis);
 		o->self_speed = rand_float(-4.0f, +4.0f);
 		o->parent = 1;
@@ -997,7 +997,7 @@ void draw(context *ctx, attached_swapchain *sc,
 			);
 		} else {
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ppipe);
-			vkCmdDrawIndexedIndirect(cmd,
+			vkCmdDrawIndirect(cmd,
 				drawbuf.handle,
 				(sc->frame_indx * MAX_DRAW_PER_FRAME + lod) * sizeof(VkDrawIndexedIndirectCommand),
 				MAX_DRAW_PER_FRAME / MAX_LOD,
@@ -1164,7 +1164,7 @@ int main()
 		&pushc_desc);
 	VkPipeline gpipe = graphics_pipeline_create("bin/planet.vert.spv", "bin/planet.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-	VkPipeline point_pipe = graphics_pipeline_create("bin/planet.vert.spv", "bin/planet.frag.spv",
+	VkPipeline point_pipe = graphics_pipeline_create("bin/planet_point.vert.spv", "bin/planet.frag.spv",
 		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
 	VkDescriptorSetLayoutBinding compute_bind[] = {
 		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),

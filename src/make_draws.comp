@@ -10,12 +10,12 @@ layout(std430, set = 0, binding = 2) restrict buffer lods {
 	uint imodel[MAX_ITEMS];
 } result;
 
-struct VkDrawIndexedIndirectCommand {
-	uint indexCount;
-	uint instanceCount;
-	uint firstIndex;
-	int  vertexOffset;
-	uint firstInstance;
+struct VkDrawIndexedIndirectCommand { // VkDrawIndirectCommand
+	uint indexCount;    // vertexCount
+	uint instanceCount; // instanceCount
+	uint firstIndex;    // firstVertex
+	int  vertexOffset;  // firstInstance
+	uint firstInstance; // padding
 };
 
 layout(std430, set = 0, binding = 3) writeonly restrict buffer commands {
@@ -56,12 +56,21 @@ void main()
 		}
 		uint draw_offset = info.baseindex * MAX_DRAW_PER_FRAME
 			+ gl_WorkGroupID.x * MAX_LOD;
-		for (uint i = 0; i < MAX_LOD; i++) {
+		for (uint i = 0; i < MAX_LOD - 1; i++) {
 			uint idraw = draw_offset + i;
 			draw[idraw].instanceCount = nlod[i];
 			draw[idraw].firstInstance = ilod[i];
 			nlod[i] = 0;
 		}
+#if 1
+		uint i = MAX_LOD - 1;
+		uint idraw = draw_offset + i;
+		draw[idraw].indexCount = nlod[i];
+		draw[idraw].instanceCount = 1;
+		draw[idraw].firstIndex = ilod[i];
+		draw[idraw].vertexOffset = 0;
+		nlod[i] = 0;
+#endif
 	}
 	memoryBarrierShared();
 
