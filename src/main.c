@@ -335,7 +335,7 @@ void pipeline_vertex_input_desc(VkVertexInputAttributeDescription *desc,
 
 VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path,
 	VkDevice logical, VkExtent2D dims, VkRenderPass gpass, u32 subpass,
-	pipeline_layout *layout)
+	pipeline_layout *layout, VkPrimitiveTopology topology)
 {
 	VkShaderModule shader_module[2];
 	VkPipelineShaderStageCreateInfo stg_desc[2];
@@ -363,7 +363,7 @@ VkPipeline graphics_pipeline_create(const char *vert_path, const char *frag_path
 	};
 	VkPipelineInputAssemblyStateCreateInfo ia_desc = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-		.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		.topology = topology,
 		.primitiveRestartEnable = VK_FALSE,
 	};
 	VkPipelineViewportStateCreateInfo vp_desc = {
@@ -910,7 +910,7 @@ VkBufferMemoryBarrier barrier_read_after_write(vulkan_buffer buf,
 }
 
 void draw(context *ctx, attached_swapchain *sc,
-	pipeline_layout *graphics_layout, VkPipeline gpipe,
+	pipeline_layout *graphics_layout, VkPipeline gpipe, VkPipeline ppipe,
 	pipeline_layout *compute_layout, VkPipeline cpipe, VkPipeline cmdpipe,
 	uploaded_mesh *mesh, camera *cam,
 	vulkan_buffer instbuf, vulkan_buffer workbuf, vulkan_buffer drawbuf,
@@ -988,12 +988,22 @@ void draw(context *ctx, attached_swapchain *sc,
 			VK_SHADER_STAGE_VERTEX_BIT  |
 			VK_SHADER_STAGE_FRAGMENT_BIT,
 			0, sizeof(pushc), &pushc);
-		vkCmdDrawIndexedIndirect(cmd,
-			drawbuf.handle,
-			(sc->frame_indx * MAX_DRAW_PER_FRAME + lod) * sizeof(VkDrawIndexedIndirectCommand),
-			MAX_DRAW_PER_FRAME / MAX_LOD,
-			MAX_LOD * sizeof(VkDrawIndexedIndirectCommand)
-		);
+		if (lod < MAX_LOD-1) {
+			vkCmdDrawIndexedIndirect(cmd,
+				drawbuf.handle,
+				(sc->frame_indx * MAX_DRAW_PER_FRAME + lod) * sizeof(VkDrawIndexedIndirectCommand),
+				MAX_DRAW_PER_FRAME / MAX_LOD,
+				MAX_LOD * sizeof(VkDrawIndexedIndirectCommand)
+			);
+		} else {
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ppipe);
+			vkCmdDrawIndexedIndirect(cmd,
+				drawbuf.handle,
+				(sc->frame_indx * MAX_DRAW_PER_FRAME + lod) * sizeof(VkDrawIndexedIndirectCommand),
+				MAX_DRAW_PER_FRAME / MAX_LOD,
+				MAX_LOD * sizeof(VkDrawIndexedIndirectCommand)
+			);
+		}
 	}
 	vkCmdEndRenderPass(cmd);
 	command_buffer_end(cmd);
@@ -1152,8 +1162,10 @@ int main()
 		ARRAY_SIZE(graphics_bind), graphics_bind, graphics_binddesc,
 		ARRAY_SIZE(graphics_poolz), graphics_poolz,
 		&pushc_desc);
-	VkPipeline gpipe = graphics_pipeline_create("bin/shader.vert.spv", "bin/shader.frag.spv",
-		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout);
+	VkPipeline gpipe = graphics_pipeline_create("bin/planet.vert.spv", "bin/planet.frag.spv",
+		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+	VkPipeline point_pipe = graphics_pipeline_create("bin/planet.vert.spv", "bin/planet.frag.spv",
+		ctx.device, sc.base.dim, sc.pass, 0, &graphics_layout, VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
 	VkDescriptorSetLayoutBinding compute_bind[] = {
 		descset_layout_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
 		descset_layout_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT),
@@ -1194,7 +1206,7 @@ int main()
 		camera_update(&cam, &ctx, dt);
 		camera_matrix(&cam);
 		draw(&ctx, &sc,
-			&graphics_layout, gpipe,
+			&graphics_layout, gpipe, point_pipe,
 			&compute_layout, cpipe, cmdpipe,
 			&lods, &cam,
 			instbuf, workbuf, drawbuf,
@@ -1209,6 +1221,7 @@ int main()
 	vkDestroyPipeline(ctx.device, cmdpipe, NULL);
 	vkDestroyPipeline(ctx.device, cpipe, NULL);
 	pipeline_layout_destroy(ctx.device, &compute_layout);
+	vkDestroyPipeline(ctx.device, point_pipe, NULL);
 	vkDestroyPipeline(ctx.device, gpipe, NULL);
 	pipeline_layout_destroy(ctx.device, &graphics_layout);
 	lifetime_fini(&window_lifetime, &ctx);
